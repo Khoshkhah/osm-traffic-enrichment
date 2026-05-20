@@ -161,28 +161,93 @@ def write_summary(name: str, total_s: float, log_path: Path) -> None:
     log.info(summary)
 
 
-# ── Step 0a — Fetch boundary from place name ────────────────────────────────
+# ── Geofabrik country URL lookup ─────────────────────────────────────────────
 
-def fetch_boundary(place_name: str, boundaries_dir: Path, name: str) -> Path:
+# Maps ISO 3166-1 alpha-2 country codes → Geofabrik download path segments.
+# URL is built as: https://download.geofabrik.de/{path}-latest.osm.pbf
+GEOFABRIK = {
+    # Europe
+    "al": "europe/albania",          "at": "europe/austria",
+    "by": "europe/belarus",          "be": "europe/belgium",
+    "ba": "europe/bosnia-herzegovina","bg": "europe/bulgaria",
+    "hr": "europe/croatia",          "cz": "europe/czech-republic",
+    "dk": "europe/denmark",          "ee": "europe/estonia",
+    "fi": "europe/finland",          "fr": "europe/france",
+    "de": "europe/germany",          "gr": "europe/greece",
+    "hu": "europe/hungary",          "is": "europe/iceland",
+    "ie": "europe/ireland",          "it": "europe/italy",
+    "lv": "europe/latvia",           "lt": "europe/lithuania",
+    "lu": "europe/luxembourg",       "md": "europe/moldova",
+    "me": "europe/montenegro",       "nl": "europe/netherlands",
+    "mk": "europe/north-macedonia",  "no": "europe/norway",
+    "pl": "europe/poland",           "pt": "europe/portugal",
+    "ro": "europe/romania",          "rs": "europe/serbia",
+    "sk": "europe/slovakia",         "si": "europe/slovenia",
+    "es": "europe/spain",            "se": "europe/sweden",
+    "ch": "europe/switzerland",      "tr": "europe/turkey",
+    "ua": "europe/ukraine",          "gb": "europe/great-britain",
+    "ru": "europe/russia",
+    # North America
+    "ca": "north-america/canada",    "mx": "north-america/mexico",
+    "us": "north-america/us",
+    # South America
+    "ar": "south-america/argentina", "br": "south-america/brazil",
+    "cl": "south-america/chile",     "co": "south-america/colombia",
+    "pe": "south-america/peru",
+    # Asia
+    "cn": "asia/china",              "in": "asia/india",
+    "id": "asia/indonesia",          "ir": "asia/iran",
+    "il": "asia/israel",             "jp": "asia/japan",
+    "kz": "asia/kazakhstan",         "my": "asia/malaysia",
+    "np": "asia/nepal",              "pk": "asia/pakistan",
+    "ph": "asia/philippines",        "sa": "asia/saudi-arabia",
+    "kr": "asia/south-korea",        "lk": "asia/sri-lanka",
+    "tw": "asia/taiwan",             "th": "asia/thailand",
+    "ae": "asia/united-arab-emirates","vn": "asia/vietnam",
+    # Africa
+    "eg": "africa/egypt",            "et": "africa/ethiopia",
+    "gh": "africa/ghana",            "ke": "africa/kenya",
+    "ma": "africa/morocco",          "ng": "africa/nigeria",
+    "za": "africa/south-africa",     "tz": "africa/tanzania",
+    "ug": "africa/uganda",
+    # Australia / Oceania
+    "au": "australia-oceania/australia",
+    "nz": "australia-oceania/new-zealand",
+}
+
+
+def country_url_from_code(country_code: str) -> str | None:
+    """Return the Geofabrik download URL for an ISO country code, or None."""
+    path = GEOFABRIK.get(country_code.lower())
+    if not path:
+        return None
+    return f"https://download.geofabrik.de/{path}-latest.osm.pbf"
+
+
+# ── Step 0a — Fetch boundary from place name ─────────────────────────────────
+
+def fetch_boundary(place_name: str, boundaries_dir: Path, name: str
+                   ) -> tuple[Path, str | None]:
     """
-    Download the administrative boundary for a named place using the
-    OSM Nominatim API and save it as boundaries/{name}.geojson.
+    Download the administrative boundary for a named place via Nominatim
+    and save it as boundaries/{name}.geojson.
 
-    Cached: if boundaries/{name}.geojson already exists it is returned as-is.
+    Returns (boundary_path, country_code).
+    country_code is the ISO 3166-1 alpha-2 code (e.g. 'ee', 'se') — used to
+    auto-resolve the Geofabrik URL when --country-url is not given.
+
+    Cached: if boundaries/{name}.geojson already exists the file is reused
+    but Nominatim is still queried to get the country code.
     """
     out_path = boundaries_dir / f"{name}.geojson"
-    if out_path.exists():
-        log.info(f"  Cached: {out_path.name} — skipping Nominatim lookup")
-        _step_records.append(("Fetch boundary from place name", "skipped", 0.0))
-        return out_path
 
     log.info(f"  Place   : {place_name}")
     log.info(f"  Source  : nominatim.openstreetmap.org")
 
     resp = requests.get(
         "https://nominatim.openstreetmap.org/search",
-        params={"q": place_name, "format": "json",
-                "limit": 5, "polygon_geojson": 1},
+        params={"q": place_name, "format": "json", "limit": 5,
+                "polygon_geojson": 1, "addressdetails": 1},
         headers={"User-Agent": "osm-traffic-enrichment/1.0"},
         timeout=15,
     )
@@ -192,16 +257,23 @@ def fetch_boundary(place_name: str, boundaries_dir: Path, name: str) -> Path:
     if not results:
         raise ValueError(f"Nominatim returned no results for '{place_name}'")
 
-    # Prefer an administrative relation (boundary polygon)
+    # Prefer an administrative relation with a polygon
     best = next((r for r in results if r["osm_type"] == "relation"
                  and r.get("geojson", {}).get("type") in ("Polygon", "MultiPolygon")),
                 results[0])
 
-    if not best.get("geojson"):
-        raise ValueError(f"No polygon found for '{place_name}' — try a more specific name")
-
+    country_code = best.get("address", {}).get("country_code")
     log.info(f"  Found   : {best['display_name'][:70]}")
-    log.info(f"  OSM ID  : {best['osm_id']}  ({best['geojson']['type']})")
+    log.info(f"  OSM ID  : {best['osm_id']}  ({best.get('geojson', {}).get('type', '?')})")
+    log.info(f"  Country : {country_code or 'unknown'}")
+
+    if out_path.exists():
+        log.info(f"  Cached  : {out_path.name} already exists — skipping save")
+        _step_records.append(("Fetch boundary from place name", "skipped", 0.0))
+        return out_path, country_code
+
+    if not best.get("geojson"):
+        raise ValueError(f"No polygon returned for '{place_name}' — try a more specific name")
 
     gdf = gpd.GeoDataFrame(
         [{"name": name, "osm_id": best["osm_id"], "place": place_name}],
@@ -211,11 +283,11 @@ def fetch_boundary(place_name: str, boundaries_dir: Path, name: str) -> Path:
     boundaries_dir.mkdir(exist_ok=True)
     gdf.to_file(out_path, driver="GeoJSON")
 
-    bounds   = gdf.total_bounds
+    bounds = gdf.total_bounds
     log.info(f"  Bounds  : W={bounds[0]:.4f} S={bounds[1]:.4f} "
              f"E={bounds[2]:.4f} N={bounds[3]:.4f}")
     log.info(f"  Saved   : {out_path}")
-    return out_path
+    return out_path, country_code
 
 
 # ── Step 0b — Download country PBF ──────────────────────────────────────────
@@ -569,7 +641,7 @@ def refresh_area(name: str, pbf_dir: Path, db_dir: Path, output_dir: Path) -> No
 
 def main():
     parser = argparse.ArgumentParser(description="OSM traffic enrichment pipeline")
-    group  = parser.add_mutually_exclusive_group(required=True)
+    group  = parser.add_mutually_exclusive_group(required=False)
     group.add_argument("--pbf",         help="Local OSM PBF file (already downloaded)")
     group.add_argument("--country-url", help="Geofabrik URL to download country PBF automatically")
     bgroup = parser.add_mutually_exclusive_group(required=True)
@@ -622,10 +694,12 @@ def main():
             with StepTimer("[0/4] Refresh — delete cached files"):
                 refresh_area(args.name, pbf_dir, db_dir, output_dir)
 
-        # Resolve boundary path — either from file or by fetching from Nominatim
+        # ── Resolve boundary ──────────────────────────────────────────────
+        country_code = None
         if args.place:
             with StepTimer("[0/4] Fetch boundary from place name"):
-                boundary = fetch_boundary(args.place, boundaries_dir, args.name)
+                boundary, country_code = fetch_boundary(
+                    args.place, boundaries_dir, args.name)
         else:
             boundary = Path(args.boundary).resolve()
             if not boundary.exists():
@@ -633,13 +707,31 @@ def main():
 
         log.info(f"  Boundary  : {boundary}")
 
-        if args.country_url:
-            with StepTimer("[0/4] Download country PBF"):
-                pbf_input = download_pbf(args.country_url, map_dir)
-        else:
+        # ── Resolve country PBF ───────────────────────────────────────────
+        if args.pbf:
             pbf_input = Path(args.pbf).resolve()
             if not pbf_input.exists():
                 sys.exit(f"ERROR: PBF file not found: {pbf_input}")
+        else:
+            # Determine URL: explicit --country-url or auto-detect from country code
+            if args.country_url:
+                pbf_url = args.country_url
+            elif country_code:
+                pbf_url = country_url_from_code(country_code)
+                if pbf_url:
+                    log.info(f"  Auto-detected Geofabrik URL for '{country_code}': {pbf_url}")
+                else:
+                    sys.exit(
+                        f"ERROR: country code '{country_code}' not in the Geofabrik map.\n"
+                        f"       Provide the URL manually with --country-url."
+                    )
+            else:
+                sys.exit(
+                    "ERROR: supply --pbf, --country-url, or use --place so the "
+                    "country URL can be detected automatically."
+                )
+            with StepTimer("[0/4] Download country PBF"):
+                pbf_input = download_pbf(pbf_url, map_dir)
 
         with StepTimer("[1/4] Filter PBF by boundary"):
             filter_pbf(pbf_input, boundary, filtered_pbf)
