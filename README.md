@@ -65,6 +65,7 @@ Typical result: **> 98% of edges** receive a congestion value.
 osm-traffic-enrichment/
 ├── pipeline.py                     # CLI: run all 4 steps end-to-end
 ├── notebook/
+│   ├── 0_get_boundary.ipynb        # Step 0: create boundary GeoJSON (3 methods)
 │   ├── 1_filter_pbf.ipynb          # Step 1: osmium extract
 │   ├── 2_build_network.ipynb       # Step 2: duckOSM → DuckDB + stats
 │   ├── 3_fetch_traffic.ipynb       # Step 3: Mapbox tiles → GeoJSON
@@ -145,6 +146,7 @@ jupyter lab
 
 | Notebook | Input | Output |
 |---|---|---|
+| `0_get_boundary.ipynb` | place name / coordinates / admin file | `boundaries/{name}.geojson` |
 | `1_filter_pbf.ipynb` | `region.osm.pbf` + boundary | `pbf/{name}.osm.pbf` |
 | `2_build_network.ipynb` | filtered PBF | `db/{name}.duckdb` |
 | `3_fetch_traffic.ipynb` | boundary + Mapbox token | `output/{name}_traffic.geojson` |
