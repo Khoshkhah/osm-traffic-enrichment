@@ -104,8 +104,12 @@ def setup_logging(name: str, logs_dir: Path) -> Path:
     return log_path
 
 
+# Global list that collects (label, status, elapsed_s) for every step
+_step_records: list[tuple[str, str, float]] = []
+
+
 class StepTimer:
-    """Context manager that logs step start, end, and elapsed time."""
+    """Context manager that logs step start/end and records timing for the summary."""
     def __init__(self, label: str):
         self.label = label
         self.t0    = None
@@ -121,11 +125,40 @@ class StepTimer:
     def __exit__(self, exc_type, exc_val, exc_tb):
         elapsed = time.time() - self.t0
         if exc_type:
+            status = "FAILED"
             log.error(f"  FAILED after {elapsed:.1f}s — {exc_val}")
             log.debug(traceback.format_exc())
         else:
+            status = "done"
             log.info(f"  ✓ Done in {elapsed:.1f}s")
+        _step_records.append((self.label, status, elapsed))
         return False   # do not suppress exceptions
+
+
+def write_summary(name: str, total_s: float, log_path: Path) -> None:
+    """Write a timing summary table to the log at the end of the pipeline."""
+    lines = [
+        "",
+        "=" * 62,
+        f"  PIPELINE SUMMARY — {name}",
+        "=" * 62,
+        f"  {'Step':<36} {'Status':<10} {'Time':>6}",
+        "  " + "─" * 58,
+    ]
+    for label, status, elapsed in _step_records:
+        # Strip the [n/4] prefix for a cleaner table
+        short = label.split("] ", 1)[-1] if "] " in label else label
+        lines.append(f"  {short:<36} {status:<10} {elapsed:>5.1f}s")
+
+    lines += [
+        "  " + "─" * 58,
+        f"  {'TOTAL':<36} {'':10} {total_s:>5.1f}s",
+        "=" * 62,
+        f"  Log file: {log_path}",
+        "=" * 62,
+    ]
+    summary = "\n".join(lines)
+    log.info(summary)
 
 
 # ── Step 0 — Download country PBF ───────────────────────────────────────────
@@ -136,6 +169,7 @@ def download_pbf(url: str, map_dir: Path) -> Path:
         size_mb = out_path.stat().st_size / 1_048_576
         log.info(f"  Cached: {out_path.name}  ({size_mb:.0f} MB) — skipping download")
         log.debug(f"  Cache path: {out_path}")
+        _step_records.append(("Download country PBF", "skipped", 0.0))
         return out_path
 
     log.info(f"  Source : {url}")
@@ -165,6 +199,7 @@ def filter_pbf(pbf_input: Path, boundary: Path, output: Path) -> None:
     if output.exists():
         size_mb = output.stat().st_size / 1_048_576
         log.info(f"  Cached: {output.name}  ({size_mb:.1f} MB) — skipping osmium extract")
+        _step_records.append(("Filter PBF by boundary", "skipped", 0.0))
         return
 
     log.info(f"  Input   : {pbf_input.name}  ({pbf_input.stat().st_size/1_048_576:.0f} MB)")
@@ -193,6 +228,7 @@ def build_network(pbf: Path, boundary: Path, name: str, db_path: Path,
     if db_path.exists():
         size_mb = db_path.stat().st_size / 1_048_576
         log.info(f"  Cached: {db_path.name}  ({size_mb:.1f} MB) — skipping duckOSM")
+        _step_records.append(("Build road network (duckOSM)", "skipped", 0.0))
         return
 
     try:
@@ -281,6 +317,7 @@ def fetch_traffic(boundary_path: Path, zoom: int, token: str,
                   tiles_dir: Path, out_file: Path) -> None:
     if out_file.exists():
         log.info(f"  Cached: {out_file.name} — skipping tile fetch")
+        _step_records.append(("Fetch Mapbox traffic tiles", "skipped", 0.0))
         return
 
     gdf      = gpd.read_file(boundary_path).to_crs("EPSG:4326")
@@ -553,13 +590,10 @@ def main():
         sys.exit(1)
 
     elapsed = time.time() - t_total
-    log.info(f"\n{'='*60}")
-    log.info(f"  ✓ Pipeline complete in {elapsed:.0f}s")
-    log.info(f"{'='*60}")
-    log.info(f"  DuckDB  → {db_path}")
+    write_summary(args.name, elapsed, log_path)
+    log.info(f"\n  DuckDB  → {db_path}")
     log.info(f"  GeoJSON → {output_dir}/{args.name}_edges_traffic.geojson")
     log.info(f"  CSV     → {output_dir}/{args.name}_edges_traffic.csv")
-    log.info(f"  Log     → {log_path}")
 
 
 if __name__ == "__main__":
