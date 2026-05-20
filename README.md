@@ -125,16 +125,36 @@ cp .env.example .env
 
 ## Quick start — CLI
 
+**Simplest — just give a place name:**
+```bash
+python pipeline.py --place "Tartu, Estonia" --name tartu
+```
+Boundary, country PBF URL, and all paths are resolved automatically.
+
+**Reuse an already-downloaded country PBF:**
 ```bash
 python pipeline.py \
-  --pbf      /path/to/sweden-latest.osm.pbf \
-  --boundary boundaries/sodermalm.geojson \
-  --name     sodermalm \
-  --zoom     14
+  --place "Nacka, Sweden" \
+  --pbf   map/sweden-latest.osm.pbf \
+  --name  nacka
 ```
 
-The pipeline is **resumable** — already-completed steps are detected by the presence of
-their output file and skipped automatically.
+**Fully manual:**
+```bash
+python pipeline.py \
+  --boundary  boundaries/sodermalm.geojson \
+  --pbf       map/sweden-latest.osm.pbf \
+  --name      sodermalm \
+  --zoom      14
+```
+
+**Force complete re-run (delete all cached files for this area):**
+```bash
+python pipeline.py --place "Tartu, Estonia" --name tartu --refresh
+```
+
+The pipeline is **resumable** — each step checks for its output and skips if already
+done. See **[docs/pipeline_cli.md](docs/pipeline_cli.md)** for the full argument reference.
 
 ---
 
@@ -217,6 +237,13 @@ modes:
 ```
 
 ---
+
+## Documentation
+
+| File | Contents |
+|---|---|
+| [docs/pipeline_cli.md](docs/pipeline_cli.md) | Full CLI argument reference with usage patterns |
+| [docs/database_schema.md](docs/database_schema.md) | DuckDB table and column reference |
 
 ## Related
 

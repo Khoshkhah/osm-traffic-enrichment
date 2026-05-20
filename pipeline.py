@@ -1,38 +1,56 @@
 """
 osm-traffic-enrichment — end-to-end CLI pipeline
 
-Usage (PBF already downloaded):
-    python pipeline.py \\
-        --pbf         /path/to/region.osm.pbf \\
-        --boundary    boundaries/tartu.geojson \\
-        --name        tartu \\
-        --zoom        14
+SIMPLEST USAGE (everything auto-detected):
+    python pipeline.py --place "Tartu, Estonia" --name tartu
 
-Usage (auto-download PBF from Geofabrik):
-    python pipeline.py \\
-        --country-url https://download.geofabrik.de/europe/estonia-latest.osm.pbf \\
-        --boundary    boundaries/tartu.geojson \\
-        --name        tartu \\
-        --zoom        14
+COMMON USAGE PATTERNS:
 
-Steps run automatically:
-    0. Refresh cache            (if --refresh: deletes area-specific cached files)
-    0. Download country PBF     (if --country-url given and not yet cached)
-    1. Filter PBF by boundary   (osmium extract)
-    2. Build road network       (duckOSM)
-    3. Fetch Mapbox tiles       (traffic-v1 + streets-v8)
-    4. Map match + enrich       (writes congestion to DuckDB)
+  1. Place name only — boundary + PBF resolved automatically:
+       python pipeline.py --place "Tartu, Estonia" --name tartu
 
-Flags:
-    --refresh    Delete all cached files for the area before running.
-                 Forces a complete re-run from the filtered PBF step onwards.
-                 The country PBF in map/ is preserved (it is shared).
+  2. Place name + explicit PBF (already downloaded):
+       python pipeline.py --place "Tartu, Estonia" --pbf map/estonia-latest.osm.pbf --name tartu
 
-Output:
-    db/{name}.duckdb              — enriched DuckDB (driving.edges has congestion column)
-    output/{name}_edges_traffic.geojson
-    output/{name}_edges_traffic.csv
-    logs/pipeline_{name}_{timestamp}.log
+  3. Manual boundary file + auto-download PBF:
+       python pipeline.py --boundary boundaries/tartu.geojson \\
+                          --country-url https://download.geofabrik.de/europe/estonia-latest.osm.pbf \\
+                          --name tartu
+
+  4. Fully manual (all paths explicit):
+       python pipeline.py --boundary boundaries/tartu.geojson \\
+                          --pbf map/estonia-latest.osm.pbf \\
+                          --name tartu --zoom 14
+
+  5. Force full re-run from scratch:
+       python pipeline.py --place "Tartu, Estonia" --name tartu --refresh
+
+ARGUMENT SUMMARY:
+    --place        Place name → auto-fetches boundary + detects country PBF URL
+    --boundary     Path to an existing boundary GeoJSON  (alternative to --place)
+    --name         Output name used for all files  [required]
+    --pbf          Path to a local .osm.pbf file  (optional if --place or --country-url given)
+    --country-url  Geofabrik download URL  (optional if --place given)
+    --zoom         Mapbox tile zoom level, default 14
+    --config       Path to a duckOSM YAML config (optional, auto-generated if absent)
+    --refresh      Delete all area-specific cached files before running
+
+  See docs/pipeline_cli.md for full argument documentation.
+
+PIPELINE STEPS:
+    [opt] Refresh cache           (--refresh)
+    [opt] Fetch boundary          (--place)
+    [opt] Download country PBF    (--country-url or auto-detected from --place)
+    [1/4] Filter PBF by boundary  (osmium extract)
+    [2/4] Build road network      (duckOSM → DuckDB)
+    [3/4] Fetch Mapbox tiles      (traffic-v1 + streets-v8)
+    [4/4] Map match + enrich      (writes congestion to DuckDB)
+
+OUTPUT:
+    db/{name}.duckdb                      enriched DuckDB
+    output/{name}_edges_traffic.geojson   road network with congestion
+    output/{name}_edges_traffic.csv       same without geometry
+    logs/pipeline_{name}_{timestamp}.log  full run log with summary
 """
 
 import argparse
