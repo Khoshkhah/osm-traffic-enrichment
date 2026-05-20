@@ -161,7 +161,64 @@ def write_summary(name: str, total_s: float, log_path: Path) -> None:
     log.info(summary)
 
 
-# ── Step 0 — Download country PBF ───────────────────────────────────────────
+# ── Step 0a — Fetch boundary from place name ────────────────────────────────
+
+def fetch_boundary(place_name: str, boundaries_dir: Path, name: str) -> Path:
+    """
+    Download the administrative boundary for a named place using the
+    OSM Nominatim API and save it as boundaries/{name}.geojson.
+
+    Cached: if boundaries/{name}.geojson already exists it is returned as-is.
+    """
+    out_path = boundaries_dir / f"{name}.geojson"
+    if out_path.exists():
+        log.info(f"  Cached: {out_path.name} — skipping Nominatim lookup")
+        _step_records.append(("Fetch boundary from place name", "skipped", 0.0))
+        return out_path
+
+    log.info(f"  Place   : {place_name}")
+    log.info(f"  Source  : nominatim.openstreetmap.org")
+
+    resp = requests.get(
+        "https://nominatim.openstreetmap.org/search",
+        params={"q": place_name, "format": "json",
+                "limit": 5, "polygon_geojson": 1},
+        headers={"User-Agent": "osm-traffic-enrichment/1.0"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    results = resp.json()
+
+    if not results:
+        raise ValueError(f"Nominatim returned no results for '{place_name}'")
+
+    # Prefer an administrative relation (boundary polygon)
+    best = next((r for r in results if r["osm_type"] == "relation"
+                 and r.get("geojson", {}).get("type") in ("Polygon", "MultiPolygon")),
+                results[0])
+
+    if not best.get("geojson"):
+        raise ValueError(f"No polygon found for '{place_name}' — try a more specific name")
+
+    log.info(f"  Found   : {best['display_name'][:70]}")
+    log.info(f"  OSM ID  : {best['osm_id']}  ({best['geojson']['type']})")
+
+    gdf = gpd.GeoDataFrame(
+        [{"name": name, "osm_id": best["osm_id"], "place": place_name}],
+        geometry=[shape(best["geojson"])],
+        crs="EPSG:4326",
+    )
+    boundaries_dir.mkdir(exist_ok=True)
+    gdf.to_file(out_path, driver="GeoJSON")
+
+    bounds   = gdf.total_bounds
+    log.info(f"  Bounds  : W={bounds[0]:.4f} S={bounds[1]:.4f} "
+             f"E={bounds[2]:.4f} N={bounds[3]:.4f}")
+    log.info(f"  Saved   : {out_path}")
+    return out_path
+
+
+# ── Step 0b — Download country PBF ──────────────────────────────────────────
 
 def download_pbf(url: str, map_dir: Path) -> Path:
     out_path = map_dir / Path(url).name
@@ -515,7 +572,10 @@ def main():
     group  = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--pbf",         help="Local OSM PBF file (already downloaded)")
     group.add_argument("--country-url", help="Geofabrik URL to download country PBF automatically")
-    parser.add_argument("--boundary", required=True, help="Boundary GeoJSON file")
+    bgroup = parser.add_mutually_exclusive_group(required=True)
+    bgroup.add_argument("--boundary", help="Boundary GeoJSON file (already created)")
+    bgroup.add_argument("--place",    help="Place name to fetch boundary automatically "
+                                           "(e.g. 'Tartu, Estonia')")
     parser.add_argument("--name",     required=True, help="Area name (used for output filenames)")
     parser.add_argument("--zoom",     type=int, default=14, help="Mapbox tile zoom level (default 14)")
     parser.add_argument("--config",   default=None, help="duckOSM YAML config (optional)")
@@ -529,9 +589,9 @@ def main():
     if not token or not token.startswith("pk."):
         sys.exit("ERROR: set MAPBOX_ACCESS_TOKEN in .env (must start with pk.)")
 
-    boundary    = Path(args.boundary).resolve()
-    config_path = Path(args.config).resolve() if args.config else \
-                  BASE_DIR / "config" / f"{args.name}.yaml"
+    config_path    = Path(args.config).resolve() if args.config else \
+                     BASE_DIR / "config" / f"{args.name}.yaml"
+    boundaries_dir = BASE_DIR / "boundaries"; boundaries_dir.mkdir(exist_ok=True)
 
     logs_dir   = BASE_DIR / "logs";   logs_dir.mkdir(exist_ok=True)
     map_dir    = BASE_DIR / "map";    map_dir.mkdir(exist_ok=True)
@@ -549,7 +609,6 @@ def main():
     log.info(f"  OSM Traffic Enrichment Pipeline")
     log.info(f"{'='*60}")
     log.info(f"  Area      : {args.name}")
-    log.info(f"  Boundary  : {boundary}")
     log.info(f"  Zoom      : {args.zoom}")
     log.info(f"  DuckDB    : {db_path}")
     log.info(f"  Started   : {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
@@ -562,6 +621,17 @@ def main():
         if args.refresh:
             with StepTimer("[0/4] Refresh — delete cached files"):
                 refresh_area(args.name, pbf_dir, db_dir, output_dir)
+
+        # Resolve boundary path — either from file or by fetching from Nominatim
+        if args.place:
+            with StepTimer("[0/4] Fetch boundary from place name"):
+                boundary = fetch_boundary(args.place, boundaries_dir, args.name)
+        else:
+            boundary = Path(args.boundary).resolve()
+            if not boundary.exists():
+                sys.exit(f"ERROR: boundary file not found: {boundary}")
+
+        log.info(f"  Boundary  : {boundary}")
 
         if args.country_url:
             with StepTimer("[0/4] Download country PBF"):
