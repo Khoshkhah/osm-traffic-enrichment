@@ -1,31 +1,18 @@
 name: "sodermalm"
-pbf_path: "/home/kaveh/projects/sodermalm/map/sodermalm.osm.pbf"
-output_path: "/home/kaveh/projects/sodermalm/map"
-# → Creates: /home/kaveh/projects/sodermalm/map/sodermalm.duckdb
+pbf_path: "/home/kaveh/projects/osm-traffic-enrichment/map/sodermalm.osm.pbf"
+output_path: "/home/kaveh/projects/osm-traffic-enrichment/map"
+# → Creates: /home/kaveh/projects/osm-traffic-enrichment/map/sodermalm.duckdb
 
-# Boundary filter (optional, but good to use since we have it)
-boundary_path: "/home/kaveh/projects/sodermalm/boundary/sodermalm.geojson"
+boundary_path: "/home/kaveh/projects/osm-traffic-enrichment/boundaries/sodermalm.geojson"
 
 options:
-  # Build routing graph table
-  build_graph: true
-  
-  # Add H3 spatial indexing
-  h3_indexing: true
-  h3_resolution: 15
-  
-  # Graph simplification (experimental)
-  # Contracts degree-2 nodes into single edges
-  simplify: yes
-  
-  # Speed processing
-  process_speeds: true
-  
-  # Extract turn restrictions
-  extract_restrictions: true
-  
-  # Calculate travel costs
-  calculate_costs: true
+  build_graph: true          # edge adjacency table for routing
+  h3_indexing: true          # H3 spatial index on edges
+  h3_resolution: 8            # H3 resolution (0-15) — match notebook 5
+  simplify: true             # contract degree-2 nodes (smaller DB, faster routing)
+  process_speeds: true       # normalise speed limits
+  extract_restrictions: true # extract turn restrictions
+  calculate_costs: true      # calculate travel time in seconds
 
 modes:
   - driving

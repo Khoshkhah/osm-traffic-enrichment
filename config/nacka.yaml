@@ -1,19 +1,18 @@
 name: "nacka"
-pbf_path: "/home/kaveh/projects/sodermalm/map/nacka.osm.pbf"
-output_path: "/home/kaveh/projects/sodermalm/map"
-# → Creates: /home/kaveh/projects/sodermalm/map/nacka.duckdb
+pbf_path: "/home/kaveh/projects/osm-traffic-enrichment/map/nacka.osm.pbf"
+output_path: "/home/kaveh/projects/osm-traffic-enrichment/db"
+# → Creates: /home/kaveh/projects/osm-traffic-enrichment/db/nacka.duckdb
 
-# Boundary filter
-boundary_path: "/home/kaveh/projects/sodermalm/boundary/nacka.geojson"
+boundary_path: "/home/kaveh/projects/osm-traffic-enrichment/boundaries/nacka.geojson"
 
 options:
-  build_graph: true
-  h3_indexing: true
-  h3_resolution: 15
-  simplify: yes
-  process_speeds: true
-  extract_restrictions: true
-  calculate_costs: true
+  build_graph: true          # edge adjacency table for routing
+  h3_indexing: true          # H3 spatial index on edges
+  h3_resolution: 8            # H3 resolution (0-15) — match notebook 5
+  simplify: true             # contract degree-2 nodes (smaller DB, faster routing)
+  process_speeds: true       # normalise speed limits
+  extract_restrictions: true # extract turn restrictions
+  calculate_costs: true      # calculate travel time in seconds
 
 modes:
   - driving
