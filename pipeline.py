@@ -26,14 +26,18 @@ Output:
     db/{name}.duckdb              — enriched DuckDB (driving.edges has congestion column)
     output/{name}_edges_traffic.geojson
     output/{name}_edges_traffic.csv
+    logs/pipeline_{name}_{timestamp}.log
 """
 
 import argparse
+import logging
 import os
 import subprocess
 import sys
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -54,64 +58,147 @@ TRAFFIC_URL = "https://api.mapbox.com/v4/mapbox.mapbox-traffic-v1/{z}/{x}/{y}.mv
 STREETS_URL = "https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.mvt"
 SEVERITY = {"severe": 4, "heavy": 3, "moderate": 2, "low": 1}
 
+log = logging.getLogger("pipeline")
 
-# ── Step 0 — Download country PBF ───────────────────────────────────────
+
+# ── Logging setup ────────────────────────────────────────────────────────────
+
+def setup_logging(name: str, logs_dir: Path) -> Path:
+    """
+    Configure logging to write to both console and a timestamped log file.
+
+    Console : INFO level  — clean progress messages
+    Log file : DEBUG level — full detail including sub-step timing and counts
+
+    Returns the path to the log file.
+    """
+    logs_dir.mkdir(exist_ok=True)
+    ts       = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    log_path = logs_dir / f"pipeline_{name}_{ts}.log"
+
+    fmt_file    = logging.Formatter("%(asctime)s  %(levelname)-8s  %(message)s",
+                                    datefmt="%Y-%m-%d %H:%M:%S")
+    fmt_console = logging.Formatter("%(message)s")
+
+    # File handler — DEBUG so nothing is missed
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(fmt_file)
+
+    # Console handler — INFO for clean output
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(logging.INFO)
+    ch.setFormatter(fmt_console)
+
+    log.setLevel(logging.DEBUG)
+    log.addHandler(fh)
+    log.addHandler(ch)
+
+    log.info(f"Log file: {log_path}")
+    return log_path
+
+
+class StepTimer:
+    """Context manager that logs step start, end, and elapsed time."""
+    def __init__(self, label: str):
+        self.label = label
+        self.t0    = None
+
+    def __enter__(self):
+        self.t0 = time.time()
+        log.info(f"\n{'─'*60}")
+        log.info(f"  {self.label}")
+        log.info(f"{'─'*60}")
+        log.debug(f"Step started at {datetime.now(timezone.utc).isoformat()}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        elapsed = time.time() - self.t0
+        if exc_type:
+            log.error(f"  FAILED after {elapsed:.1f}s — {exc_val}")
+            log.debug(traceback.format_exc())
+        else:
+            log.info(f"  ✓ Done in {elapsed:.1f}s")
+        return False   # do not suppress exceptions
+
+
+# ── Step 0 — Download country PBF ───────────────────────────────────────────
 
 def download_pbf(url: str, map_dir: Path) -> Path:
-    """Download a country PBF from Geofabrik if not already cached."""
     out_path = map_dir / Path(url).name
     if out_path.exists():
         size_mb = out_path.stat().st_size / 1_048_576
-        print(f"  Cached: {out_path.name}  ({size_mb:.0f} MB) — skipping download")
+        log.info(f"  Cached: {out_path.name}  ({size_mb:.0f} MB) — skipping download")
+        log.debug(f"  Cache path: {out_path}")
         return out_path
-    print(f"  Downloading {url} ...")
+
+    log.info(f"  Source : {url}")
     with requests.get(url, stream=True, timeout=30) as r:
         r.raise_for_status()
         total      = int(r.headers.get("content-length", 0))
         downloaded = 0
+        log.info(f"  Size   : {total/1_048_576:.0f} MB")
         with open(out_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8 * 1024 * 1024):
                 f.write(chunk)
                 downloaded += len(chunk)
                 if total:
-                    print(f"  {downloaded/1_048_576:.0f} / {total/1_048_576:.0f} MB"
-                          f"  ({downloaded/total*100:.0f}%)", end="\r")
+                    pct = downloaded / total * 100
+                    log.debug(f"  Progress: {downloaded/1_048_576:.0f} / {total/1_048_576:.0f} MB  ({pct:.0f}%)")
+                    print(f"  {downloaded/1_048_576:.0f} / {total/1_048_576:.0f} MB  ({pct:.0f}%)", end="\r")
+
     size_mb = out_path.stat().st_size / 1_048_576
-    print(f"\n  Done: {out_path.name}  ({size_mb:.0f} MB)")
+    print()  # newline after progress line
+    log.info(f"  Saved  : {out_path.name}  ({size_mb:.0f} MB)")
     return out_path
 
 
-# ── Step 1 — Filter PBF ──────────────────────────────────────────────────
+# ── Step 1 — Filter PBF ─────────────────────────────────────────────────────
 
 def filter_pbf(pbf_input: Path, boundary: Path, output: Path) -> None:
-    print(f"\n[1/4] Filtering PBF by boundary...")
     if output.exists():
-        print(f"  Cached: {output.name} — skipping osmium extract")
+        size_mb = output.stat().st_size / 1_048_576
+        log.info(f"  Cached: {output.name}  ({size_mb:.1f} MB) — skipping osmium extract")
         return
+
+    log.info(f"  Input   : {pbf_input.name}  ({pbf_input.stat().st_size/1_048_576:.0f} MB)")
+    log.info(f"  Boundary: {boundary.name}")
+    log.info(f"  Output  : {output.name}")
+
     cmd = ["osmium", "extract", "--polygon", str(boundary.resolve()),
            "--output", str(output.resolve()), "--overwrite", str(pbf_input.resolve())]
+    log.debug(f"  Command : {' '.join(cmd)}")
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
-        sys.exit(f"osmium extract failed:\n{result.stderr}")
-    print(f"  Done: {output.name}  ({output.stat().st_size / 1_048_576:.1f} MB)")
+        log.error(f"  osmium stderr:\n{result.stderr}")
+        raise RuntimeError(f"osmium extract failed (exit {result.returncode})")
+
+    size_mb = output.stat().st_size / 1_048_576
+    log.info(f"  Result  : {output.name}  ({size_mb:.2f} MB)")
+    if result.stderr:
+        log.debug(f"  osmium output: {result.stderr.strip()}")
 
 
-# ── Step 2 — Build network ───────────────────────────────────────────────
+# ── Step 2 — Build network ───────────────────────────────────────────────────
 
 def build_network(pbf: Path, boundary: Path, name: str, db_path: Path,
                   config_path: Path | None) -> None:
-    print(f"\n[2/4] Building road network with duckOSM...")
     if db_path.exists():
-        print(f"  Cached: {db_path.name} — skipping duckOSM")
+        size_mb = db_path.stat().st_size / 1_048_576
+        log.info(f"  Cached: {db_path.name}  ({size_mb:.1f} MB) — skipping duckOSM")
         return
+
     try:
         from duckosm import DuckOSM, Config
     except ImportError:
-        sys.exit("duckOSM not found. Install: pip install -e ../h3-routing-platform/tools/duckOSM")
+        raise ImportError("duckOSM not found. Install: pip install -e ../duckOSM")
 
     if config_path and config_path.exists():
+        log.info(f"  Config  : {config_path}")
         config = Config.from_yaml(str(config_path))
     else:
+        log.info(f"  Config  : programmatic (driving mode, H3 resolution 8)")
         config = Config.from_args(
             pbf_path=str(pbf), output_path=str(db_path.parent),
             name=name, boundary_path=str(boundary), modes=["driving"],
@@ -119,12 +206,24 @@ def build_network(pbf: Path, boundary: Path, name: str, db_path: Path,
             simplify=True, process_speeds=True,
             extract_restrictions=True, calculate_costs=True,
         )
+
+    log.info(f"  Running duckOSM...")
     result_path = DuckOSM(config).run()
-    size = result_path.stat().st_size / 1_048_576
-    print(f"  Done: {result_path.name}  ({size:.1f} MB)")
+    size_mb     = result_path.stat().st_size / 1_048_576
+    log.info(f"  Result  : {result_path.name}  ({size_mb:.1f} MB)")
+
+    # Log edge counts per mode
+    con = duckdb.connect(str(result_path), read_only=True)
+    for mode in ["driving", "walking", "cycling"]:
+        try:
+            n = con.execute(f"SELECT count(*) FROM {mode}.edges").fetchone()[0]
+            log.info(f"  Edges   : {mode:8s} → {n:,}")
+        except Exception:
+            pass
+    con.close()
 
 
-# ── Step 3 — Fetch Mapbox tiles ──────────────────────────────────────────
+# ── Step 3 — Fetch Mapbox tiles ──────────────────────────────────────────────
 
 def _download_tile(url_tpl, tile, out_dir, token, retries=3):
     path = out_dir / f"{tile.z}_{tile.x}_{tile.y}.mvt"
@@ -135,29 +234,32 @@ def _download_tile(url_tpl, tile, out_dir, token, retries=3):
         try:
             r = requests.get(url, params={"access_token": token}, timeout=(5, 20))
         except requests.exceptions.Timeout:
+            log.debug(f"  Timeout on {tile} (attempt {attempt+1})")
             time.sleep(2 ** attempt)
             continue
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as e:
+            log.warning(f"  Network error on {tile}: {e}")
             return tile, None
         if r.status_code == 200:
             path.write_bytes(r.content)
             return tile, path
         if r.status_code == 429:
+            log.debug(f"  Rate limited on {tile}, backing off")
             time.sleep(2 ** attempt)
         else:
+            log.warning(f"  {tile} HTTP {r.status_code}")
             return tile, None
     return tile, None
 
 
 def _decode_mvt(path, tile, layer_name):
-    data = path.read_bytes()
+    data    = path.read_bytes()
     decoded = mapbox_vector_tile.decode(data, default_options={"y_coord_down": True})
-    layer = decoded.get(layer_name, {})
-    extent = layer.get("extent", 4096)
-    b = mercantile.bounds(tile)
-    dx = (b.east - b.west) / extent
-    dy = (b.north - b.south) / extent
-    matrix = [dx, 0, 0, -dy, b.west, b.north]
+    layer   = decoded.get(layer_name, {})
+    extent  = layer.get("extent", 4096)
+    b       = mercantile.bounds(tile)
+    dx, dy  = (b.east - b.west) / extent, (b.north - b.south) / extent
+    matrix  = [dx, 0, 0, -dy, b.west, b.north]
     features = []
     for feat in layer.get("features", []):
         geom = affine_transform(shape(feat["geometry"]), matrix)
@@ -171,22 +273,24 @@ def _decode_mvt(path, tile, layer_name):
 
 def fetch_traffic(boundary_path: Path, zoom: int, token: str,
                   tiles_dir: Path, out_file: Path) -> None:
-    print(f"\n[3/4] Fetching Mapbox traffic tiles (zoom {zoom})...")
     if out_file.exists():
-        print(f"  Cached: {out_file.name} — skipping download")
+        log.info(f"  Cached: {out_file.name} — skipping tile fetch")
         return
 
-    gdf = gpd.read_file(boundary_path).to_crs("EPSG:4326")
+    gdf      = gpd.read_file(boundary_path).to_crs("EPSG:4326")
     boundary = gdf.geometry.union_all()
     w, s, e, n = boundary.bounds
     tiles = [t for t in mercantile.tiles(w, s, e, n, zooms=zoom)
              if boundary.intersects(box(*mercantile.bounds(t)))]
-    print(f"  {len(tiles)} tiles to fetch")
+
+    log.info(f"  Zoom    : {zoom}")
+    log.info(f"  Tiles   : {len(tiles)} tiles × 2 tilesets = {len(tiles)*2} requests")
 
     (tiles_dir / "traffic").mkdir(parents=True, exist_ok=True)
     (tiles_dir / "streets").mkdir(parents=True, exist_ok=True)
 
     traffic_paths, streets_paths = {}, {}
+    failed = []
     with ThreadPoolExecutor(max_workers=6) as pool:
         futs = {pool.submit(_download_tile, TRAFFIC_URL, t, tiles_dir/"traffic", token): ("t", t)
                 for t in tiles}
@@ -197,12 +301,27 @@ def fetch_traffic(boundary_path: Path, zoom: int, token: str,
             _, path = f.result()
             if path:
                 (traffic_paths if kind == "t" else streets_paths)[tile] = path
+                log.debug(f"  Downloaded [{kind}] {tile}  {path.stat().st_size:,} B")
+            else:
+                failed.append((kind, tile))
+                log.warning(f"  FAILED [{kind}] {tile}")
+
+    log.info(f"  Traffic : {len(traffic_paths)}/{len(tiles)} tiles ok")
+    log.info(f"  Streets : {len(streets_paths)}/{len(tiles)} tiles ok")
+    if failed:
+        log.warning(f"  Failed  : {len(failed)} tiles — results may be incomplete")
 
     traffic_feats, streets_feats = [], []
     for tile, path in traffic_paths.items():
-        traffic_feats.extend(_decode_mvt(path, tile, "traffic"))
+        feats = _decode_mvt(path, tile, "traffic")
+        traffic_feats.extend(feats)
+        log.debug(f"  Decoded traffic {tile}: {len(feats)} features")
     for tile, path in streets_paths.items():
-        streets_feats.extend(_decode_mvt(path, tile, "road"))
+        feats = _decode_mvt(path, tile, "road")
+        streets_feats.extend(feats)
+        log.debug(f"  Decoded streets {tile}: {len(feats)} features")
+
+    log.info(f"  Decoded : {len(traffic_feats)} traffic segments, {len(streets_feats)} street segments")
 
     streets_gdf = (gpd.GeoDataFrame.from_features(streets_feats, crs="EPSG:4326")
                    .explode(index_parts=False).reset_index(drop=True))
@@ -211,17 +330,20 @@ def fetch_traffic(boundary_path: Path, zoom: int, token: str,
 
     streets_m = streets_gdf.to_crs("EPSG:3857")
     traffic_m = traffic_gdf[["congestion", "geometry"]].to_crs("EPSG:3857")
-    joined = gpd.sjoin_nearest(streets_m, traffic_m, how="left",
-                               max_distance=20, distance_col="_d"
-                               ).drop(columns=["index_right", "_d"], errors="ignore")
-    joined = joined[~joined.index.duplicated(keep="first")].to_crs("EPSG:4326")
+    joined    = gpd.sjoin_nearest(streets_m, traffic_m, how="left",
+                                  max_distance=20, distance_col="_d"
+                                  ).drop(columns=["index_right", "_d"], errors="ignore")
+    joined    = joined[~joined.index.duplicated(keep="first")].to_crs("EPSG:4326")
     joined["congestion"] = joined["congestion"].fillna("no data")
-    clipped = gpd.clip(joined, gdf)
+    clipped   = gpd.clip(joined, gdf)
+
     clipped.to_file(out_file, driver="GeoJSON")
-    print(f"  Done: {out_file.name}  ({len(clipped):,} segments)")
+    log.info(f"  Saved   : {out_file.name}  ({len(clipped):,} segments)")
+    cong_dist = clipped["congestion"].value_counts().to_dict()
+    log.debug(f"  Congestion distribution: {cong_dist}")
 
 
-# ── Step 4 — Map match + write to DuckDB ────────────────────────────────
+# ── Step 4 — Map match + write to DuckDB ────────────────────────────────────
 
 def _bearing(geom):
     c = get_coordinates(geom)
@@ -244,8 +366,6 @@ def _all_matches(t_geom, osm_gdf, sindex, buf=25, dir_thresh=45, overlap_thresh=
 
 
 def map_match(db_path: Path, traffic_file: Path, name: str, output_dir: Path) -> None:
-    print(f"\n[4/4] Map matching traffic → OSM edges...")
-
     con = duckdb.connect(str(db_path))
     con.execute("LOAD spatial")
     df = con.execute(
@@ -261,6 +381,9 @@ def map_match(db_path: Path, traffic_file: Path, name: str, output_dir: Path) ->
         & (traffic["congestion"] != "no data")
     ].reset_index(drop=True)
 
+    log.info(f"  OSM edges       : {len(edges):,}")
+    log.info(f"  Traffic segments: {len(traffic):,} (with congestion)")
+
     edges_m   = edges.to_crs("EPSG:3857").reset_index(drop=True)
     traffic_m = traffic.to_crs("EPSG:3857").reset_index(drop=True)
     sindex    = edges_m.sindex
@@ -268,35 +391,40 @@ def map_match(db_path: Path, traffic_file: Path, name: str, output_dir: Path) ->
     edge_cong, total_pairs = {}, 0
     for _, row in traffic_m.iterrows():
         matched = _all_matches(row.geometry, edges_m, sindex)
-        cong = row["congestion"]
+        cong    = row["congestion"]
         for idx in matched:
             eid = int(edges_m.iloc[idx]["edge_id"])
             if SEVERITY.get(cong, 0) > SEVERITY.get(edge_cong.get(eid, ""), 0):
                 edge_cong[eid] = cong
         total_pairs += len(matched)
 
+    matched_pct = len(edge_cong) / max(len(edges), 1) * 100
+    log.info(f"  Edges matched   : {len(edge_cong):,} / {len(edges):,}  ({matched_pct:.1f}%)")
+    log.info(f"  Total pairs     : {total_pairs:,}  (avg {total_pairs/max(len(traffic_m),1):.1f} per segment)")
+
     con.execute("ALTER TABLE driving.edges ADD COLUMN IF NOT EXISTS congestion VARCHAR DEFAULT 'no data'")
     con.executemany("UPDATE driving.edges SET congestion = ? WHERE edge_id = ?",
                     [(c, e) for e, c in edge_cong.items()])
     con.close()
-
-    matched_pct = len(edge_cong) / max(len(edges), 1) * 100
-    print(f"  Edges matched : {len(edge_cong):,} / {len(edges):,}  ({matched_pct:.1f}%)")
-    print(f"  Total pairs   : {total_pairs:,}  (avg {total_pairs/max(len(traffic_m),1):.1f} per segment)")
-    print(f"  Written to    : {db_path}")
+    log.info(f"  Congestion written to DuckDB: {db_path.name}")
 
     edges["congestion"] = edges["edge_id"].map(edge_cong).fillna("no data")
-    edges.to_file(output_dir / f"{name}_edges_traffic.geojson", driver="GeoJSON")
-    edges.drop(columns=["geometry", "wkt_geom"], errors="ignore").to_csv(
-        output_dir / f"{name}_edges_traffic.csv", index=False)
-    print(f"  Exports saved to {output_dir}/")
+    cong_dist = edges["congestion"].value_counts().to_dict()
+    log.debug(f"  Congestion distribution: {cong_dist}")
+
+    geojson_out = output_dir / f"{name}_edges_traffic.geojson"
+    csv_out     = output_dir / f"{name}_edges_traffic.csv"
+    edges.to_file(geojson_out, driver="GeoJSON")
+    edges.drop(columns=["geometry", "wkt_geom"], errors="ignore").to_csv(csv_out, index=False)
+    log.info(f"  GeoJSON saved   : {geojson_out.name}")
+    log.info(f"  CSV saved       : {csv_out.name}")
 
 
-# ── Main ─────────────────────────────────────────────────────────────────
+# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="OSM traffic enrichment pipeline")
-    group = parser.add_mutually_exclusive_group(required=True)
+    group  = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--pbf",         help="Local OSM PBF file (already downloaded)")
     group.add_argument("--country-url", help="Geofabrik URL to download country PBF automatically")
     parser.add_argument("--boundary", required=True, help="Boundary GeoJSON file")
@@ -309,41 +437,68 @@ def main():
     if not token or not token.startswith("pk."):
         sys.exit("ERROR: set MAPBOX_ACCESS_TOKEN in .env (must start with pk.)")
 
-    boundary     = Path(args.boundary).resolve()
-    config_path  = Path(args.config).resolve() if args.config else \
-                   BASE_DIR / "config" / f"{args.name}.yaml"
+    boundary    = Path(args.boundary).resolve()
+    config_path = Path(args.config).resolve() if args.config else \
+                  BASE_DIR / "config" / f"{args.name}.yaml"
 
+    logs_dir   = BASE_DIR / "logs";   logs_dir.mkdir(exist_ok=True)
     map_dir    = BASE_DIR / "map";    map_dir.mkdir(exist_ok=True)
     pbf_dir    = BASE_DIR / "pbf";    pbf_dir.mkdir(exist_ok=True)
     db_dir     = BASE_DIR / "db";     db_dir.mkdir(exist_ok=True)
     tiles_dir  = BASE_DIR / "tiles";  tiles_dir.mkdir(exist_ok=True)
     output_dir = BASE_DIR / "output"; output_dir.mkdir(exist_ok=True)
 
+    log_path     = setup_logging(args.name, logs_dir)
     filtered_pbf = pbf_dir    / f"{args.name}.osm.pbf"
     db_path      = db_dir     / f"{args.name}.duckdb"
     traffic_file = output_dir / f"{args.name}_traffic.geojson"
 
-    t0 = time.time()
+    log.info(f"{'='*60}")
+    log.info(f"  OSM Traffic Enrichment Pipeline")
+    log.info(f"{'='*60}")
+    log.info(f"  Area      : {args.name}")
+    log.info(f"  Boundary  : {boundary}")
+    log.info(f"  Zoom      : {args.zoom}")
+    log.info(f"  DuckDB    : {db_path}")
+    log.info(f"  Started   : {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
-    # Step 0 — download country PBF if URL provided
-    if args.country_url:
-        print(f"\n[0/4] Downloading country PBF...")
-        pbf_input = download_pbf(args.country_url, map_dir)
-    else:
-        pbf_input = Path(args.pbf).resolve()
-        if not pbf_input.exists():
-            sys.exit(f"ERROR: PBF file not found: {pbf_input}")
+    t_total = time.time()
 
-    filter_pbf(pbf_input, boundary, filtered_pbf)
-    build_network(filtered_pbf, boundary, args.name, db_path, config_path)
-    fetch_traffic(boundary, args.zoom, token, tiles_dir, traffic_file)
-    map_match(db_path, traffic_file, args.name, output_dir)
+    try:
+        if args.country_url:
+            with StepTimer("[0/4] Download country PBF"):
+                pbf_input = download_pbf(args.country_url, map_dir)
+        else:
+            pbf_input = Path(args.pbf).resolve()
+            if not pbf_input.exists():
+                sys.exit(f"ERROR: PBF file not found: {pbf_input}")
 
-    elapsed = time.time() - t0
-    print(f"\n✓ Pipeline complete in {elapsed:.0f}s")
-    print(f"  DuckDB  → {db_path}")
-    print(f"  GeoJSON → {output_dir}/{args.name}_edges_traffic.geojson")
-    print(f"  CSV     → {output_dir}/{args.name}_edges_traffic.csv")
+        with StepTimer("[1/4] Filter PBF by boundary"):
+            filter_pbf(pbf_input, boundary, filtered_pbf)
+
+        with StepTimer("[2/4] Build road network (duckOSM)"):
+            build_network(filtered_pbf, boundary, args.name, db_path, config_path)
+
+        with StepTimer("[3/4] Fetch Mapbox traffic tiles"):
+            fetch_traffic(boundary, args.zoom, token, tiles_dir, traffic_file)
+
+        with StepTimer("[4/4] Map match + enrich DuckDB"):
+            map_match(db_path, traffic_file, args.name, output_dir)
+
+    except Exception as e:
+        log.error(f"\nPipeline FAILED: {e}")
+        log.debug(traceback.format_exc())
+        log.error(f"See full log: {log_path}")
+        sys.exit(1)
+
+    elapsed = time.time() - t_total
+    log.info(f"\n{'='*60}")
+    log.info(f"  ✓ Pipeline complete in {elapsed:.0f}s")
+    log.info(f"{'='*60}")
+    log.info(f"  DuckDB  → {db_path}")
+    log.info(f"  GeoJSON → {output_dir}/{args.name}_edges_traffic.geojson")
+    log.info(f"  CSV     → {output_dir}/{args.name}_edges_traffic.csv")
+    log.info(f"  Log     → {log_path}")
 
 
 if __name__ == "__main__":
