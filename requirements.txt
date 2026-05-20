@@ -12,8 +12,10 @@ matplotlib>=3.8
 h3>=4.0
 osmnx>=1.9                 # notebook 0: fetch boundaries by name from OSM
 
-# duckOSM — install from the h3-routing-platform repo:
-#   pip install -e ../h3-routing-platform/tools/duckOSM
+# duckOSM — install from the standalone repo:
+#   pip install -e ../duckOSM
+# or directly from GitHub:
+#   pip install git+https://github.com/Khoshkhah/duckOSM.git
 
 # osmium-tool — system package (not pip):
 #   Ubuntu/Debian : sudo apt install osmium-tool

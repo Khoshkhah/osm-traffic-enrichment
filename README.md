@@ -8,7 +8,7 @@ This project combines three tools:
 | Tool | Source | Role |
 |---|---|---|
 | **osmium-tool** | system package | Clips a large OSM PBF to your boundary |
-| **duckOSM** | [h3-routing-platform](https://github.com/khoshkhah/h3-routing-platform) | Builds a routable DuckDB network from the PBF |
+| **duckOSM** | [github.com/Khoshkhah/duckOSM](https://github.com/Khoshkhah/duckOSM) | Builds a routable DuckDB network from the PBF |
 | **Mapbox Traffic v1** | Mapbox API | Provides real-time congestion per road segment |
 
 ---
@@ -98,7 +98,7 @@ output/      ← GeoJSON + CSV exports
 |---|---|
 | Python 3.10+ | — |
 | **osmium-tool** | `sudo apt install osmium-tool` / `brew install osmium-tool` |
-| **duckOSM** | `pip install -e ../h3-routing-platform/tools/duckOSM` |
+| **duckOSM** | `pip install -e ../duckOSM`  or  `pip install git+https://github.com/Khoshkhah/duckOSM.git` |
 | Mapbox account | [account.mapbox.com](https://account.mapbox.com/access-tokens/) |
 | OSM PBF file | [download.geofabrik.de](https://download.geofabrik.de/) |
 
@@ -112,8 +112,10 @@ cd osm-traffic-enrichment
 
 pip install -r requirements.txt
 
-# Install duckOSM from the h3-routing-platform repo
-pip install -e ../h3-routing-platform/tools/duckOSM
+# Install duckOSM from the standalone repo
+pip install -e ../duckOSM
+# or directly from GitHub (no local clone needed):
+# pip install git+https://github.com/Khoshkhah/duckOSM.git
 
 cp .env.example .env
 # Edit .env and add your Mapbox token
@@ -218,7 +220,7 @@ modes:
 
 ## Related
 
-- [h3-routing-platform / duckOSM](https://github.com/khoshkhah/h3-routing-platform) — OSM → DuckDB network builder used in step 2
+- [duckOSM](https://github.com/Khoshkhah/duckOSM) — OSM → DuckDB network builder used in step 2
 - [Mapbox Traffic v1 tileset](https://docs.mapbox.com/data/tilesets/reference/mapbox-traffic-v1/)
 - [Mapbox Vector Tile specification](https://github.com/mapbox/vector-tile-spec)
 - [Geofabrik OSM extracts](https://download.geofabrik.de/)
