@@ -1,0 +1,24 @@
+# Secrets
+.env
+
+# Generated at runtime — not tracked
+pbf/
+db/
+tiles/
+decoded/
+output/
+*.pbf
+*.mvt
+*.duckdb
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db

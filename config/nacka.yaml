@@ -1,0 +1,21 @@
+name: "nacka"
+pbf_path: "/home/kaveh/projects/sodermalm/map/nacka.osm.pbf"
+output_path: "/home/kaveh/projects/sodermalm/map"
+# → Creates: /home/kaveh/projects/sodermalm/map/nacka.duckdb
+
+# Boundary filter
+boundary_path: "/home/kaveh/projects/sodermalm/boundary/nacka.geojson"
+
+options:
+  build_graph: true
+  h3_indexing: true
+  h3_resolution: 15
+  simplify: yes
+  process_speeds: true
+  extract_restrictions: true
+  calculate_costs: true
+
+modes:
+  - driving
+  - walking
+  - cycling
