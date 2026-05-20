@@ -1,18 +1,26 @@
 """
 osm-traffic-enrichment — end-to-end CLI pipeline
 
-Usage:
+Usage (PBF already downloaded):
     python pipeline.py \\
-        --pbf       /path/to/region.osm.pbf \\
-        --boundary  boundaries/sodermalm.geojson \\
-        --name      sodermalm \\
-        --zoom      14
+        --pbf         /path/to/region.osm.pbf \\
+        --boundary    boundaries/tartu.geojson \\
+        --name        tartu \\
+        --zoom        14
+
+Usage (auto-download PBF from Geofabrik):
+    python pipeline.py \\
+        --country-url https://download.geofabrik.de/europe/estonia-latest.osm.pbf \\
+        --boundary    boundaries/tartu.geojson \\
+        --name        tartu \\
+        --zoom        14
 
 Steps run automatically:
-    1. Filter PBF by boundary  (osmium extract)
-    2. Build road network      (duckOSM)
-    3. Fetch Mapbox tiles      (traffic-v1 + streets-v8)
-    4. Map match + enrich      (writes congestion to DuckDB)
+    0. Download country PBF     (if --country-url given and not yet cached)
+    1. Filter PBF by boundary   (osmium extract)
+    2. Build road network       (duckOSM)
+    3. Fetch Mapbox tiles       (traffic-v1 + streets-v8)
+    4. Map match + enrich       (writes congestion to DuckDB)
 
 Output:
     db/{name}.duckdb              — enriched DuckDB (driving.edges has congestion column)
@@ -45,6 +53,32 @@ BASE_DIR = Path(__file__).parent
 TRAFFIC_URL = "https://api.mapbox.com/v4/mapbox.mapbox-traffic-v1/{z}/{x}/{y}.mvt"
 STREETS_URL = "https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.mvt"
 SEVERITY = {"severe": 4, "heavy": 3, "moderate": 2, "low": 1}
+
+
+# ── Step 0 — Download country PBF ───────────────────────────────────────
+
+def download_pbf(url: str, map_dir: Path) -> Path:
+    """Download a country PBF from Geofabrik if not already cached."""
+    out_path = map_dir / Path(url).name
+    if out_path.exists():
+        size_mb = out_path.stat().st_size / 1_048_576
+        print(f"  Cached: {out_path.name}  ({size_mb:.0f} MB) — skipping download")
+        return out_path
+    print(f"  Downloading {url} ...")
+    with requests.get(url, stream=True, timeout=30) as r:
+        r.raise_for_status()
+        total      = int(r.headers.get("content-length", 0))
+        downloaded = 0
+        with open(out_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8 * 1024 * 1024):
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total:
+                    print(f"  {downloaded/1_048_576:.0f} / {total/1_048_576:.0f} MB"
+                          f"  ({downloaded/total*100:.0f}%)", end="\r")
+    size_mb = out_path.stat().st_size / 1_048_576
+    print(f"\n  Done: {out_path.name}  ({size_mb:.0f} MB)")
+    return out_path
 
 
 # ── Step 1 — Filter PBF ──────────────────────────────────────────────────
@@ -262,7 +296,9 @@ def map_match(db_path: Path, traffic_file: Path, name: str, output_dir: Path) ->
 
 def main():
     parser = argparse.ArgumentParser(description="OSM traffic enrichment pipeline")
-    parser.add_argument("--pbf",      required=True, help="Input OSM PBF file")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--pbf",         help="Local OSM PBF file (already downloaded)")
+    group.add_argument("--country-url", help="Geofabrik URL to download country PBF automatically")
     parser.add_argument("--boundary", required=True, help="Boundary GeoJSON file")
     parser.add_argument("--name",     required=True, help="Area name (used for output filenames)")
     parser.add_argument("--zoom",     type=int, default=14, help="Mapbox tile zoom level (default 14)")
@@ -273,21 +309,31 @@ def main():
     if not token or not token.startswith("pk."):
         sys.exit("ERROR: set MAPBOX_ACCESS_TOKEN in .env (must start with pk.)")
 
-    pbf_input    = Path(args.pbf).resolve()
     boundary     = Path(args.boundary).resolve()
     config_path  = Path(args.config).resolve() if args.config else \
                    BASE_DIR / "config" / f"{args.name}.yaml"
 
+    map_dir    = BASE_DIR / "map";    map_dir.mkdir(exist_ok=True)
     pbf_dir    = BASE_DIR / "pbf";    pbf_dir.mkdir(exist_ok=True)
     db_dir     = BASE_DIR / "db";     db_dir.mkdir(exist_ok=True)
     tiles_dir  = BASE_DIR / "tiles";  tiles_dir.mkdir(exist_ok=True)
     output_dir = BASE_DIR / "output"; output_dir.mkdir(exist_ok=True)
 
-    filtered_pbf  = pbf_dir   / f"{args.name}.osm.pbf"
-    db_path       = db_dir    / f"{args.name}.duckdb"
-    traffic_file  = output_dir / f"{args.name}_traffic.geojson"
+    filtered_pbf = pbf_dir    / f"{args.name}.osm.pbf"
+    db_path      = db_dir     / f"{args.name}.duckdb"
+    traffic_file = output_dir / f"{args.name}_traffic.geojson"
 
     t0 = time.time()
+
+    # Step 0 — download country PBF if URL provided
+    if args.country_url:
+        print(f"\n[0/4] Downloading country PBF...")
+        pbf_input = download_pbf(args.country_url, map_dir)
+    else:
+        pbf_input = Path(args.pbf).resolve()
+        if not pbf_input.exists():
+            sys.exit(f"ERROR: PBF file not found: {pbf_input}")
+
     filter_pbf(pbf_input, boundary, filtered_pbf)
     build_network(filtered_pbf, boundary, args.name, db_path, config_path)
     fetch_traffic(boundary, args.zoom, token, tiles_dir, traffic_file)
