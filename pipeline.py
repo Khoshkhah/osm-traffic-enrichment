@@ -16,11 +16,17 @@ Usage (auto-download PBF from Geofabrik):
         --zoom        14
 
 Steps run automatically:
+    0. Refresh cache            (if --refresh: deletes area-specific cached files)
     0. Download country PBF     (if --country-url given and not yet cached)
     1. Filter PBF by boundary   (osmium extract)
     2. Build road network       (duckOSM)
     3. Fetch Mapbox tiles       (traffic-v1 + streets-v8)
     4. Map match + enrich       (writes congestion to DuckDB)
+
+Flags:
+    --refresh    Delete all cached files for the area before running.
+                 Forces a complete re-run from the filtered PBF step onwards.
+                 The country PBF in map/ is preserved (it is shared).
 
 Output:
     db/{name}.duckdb              — enriched DuckDB (driving.edges has congestion column)
@@ -420,6 +426,51 @@ def map_match(db_path: Path, traffic_file: Path, name: str, output_dir: Path) ->
     log.info(f"  CSV saved       : {csv_out.name}")
 
 
+# ── Refresh ──────────────────────────────────────────────────────────────────
+
+def refresh_area(name: str, pbf_dir: Path, db_dir: Path, output_dir: Path) -> None:
+    """
+    Delete all cached files for a named area so the pipeline runs from scratch.
+
+    What is deleted (area-specific files only):
+      pbf/{name}.osm.pbf              — filtered regional PBF
+      db/{name}.duckdb                — DuckDB routing network
+      db/{name}.duckdb.wal            — DuckDB write-ahead log (if present)
+      output/{name}_traffic.geojson   — decoded Mapbox traffic segments
+      output/{name}_traffic.csv
+      output/{name}_edges_traffic.geojson  — enriched edge network
+      output/{name}_edges_traffic.csv
+
+    What is NOT deleted (shared resources):
+      map/*.osm.pbf    — country PBF (may be used by other areas)
+      tiles/**/*.mvt   — tiles are identified by z/x/y, not by area name
+      boundaries/      — input boundary files
+    """
+    targets = [
+        pbf_dir    / f"{name}.osm.pbf",
+        db_dir     / f"{name}.duckdb",
+        db_dir     / f"{name}.duckdb.wal",
+        output_dir / f"{name}_traffic.geojson",
+        output_dir / f"{name}_traffic.csv",
+        output_dir / f"{name}_edges_traffic.geojson",
+        output_dir / f"{name}_edges_traffic.csv",
+    ]
+
+    log.info(f"  Refreshing cached files for '{name}':")
+    deleted, skipped = 0, 0
+    for path in targets:
+        if path.exists():
+            size_mb = path.stat().st_size / 1_048_576
+            path.unlink()
+            log.info(f"  Deleted : {path.name}  ({size_mb:.1f} MB)")
+            deleted += 1
+        else:
+            log.debug(f"  Missing : {path.name} — skipped")
+            skipped += 1
+
+    log.info(f"  Result  : {deleted} file(s) deleted, {skipped} already absent")
+
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
@@ -431,6 +482,10 @@ def main():
     parser.add_argument("--name",     required=True, help="Area name (used for output filenames)")
     parser.add_argument("--zoom",     type=int, default=14, help="Mapbox tile zoom level (default 14)")
     parser.add_argument("--config",   default=None, help="duckOSM YAML config (optional)")
+    parser.add_argument("--refresh",  action="store_true",
+                        help="Delete all cached files for this area before running "
+                             "(filtered PBF, DuckDB, traffic GeoJSON/CSV). "
+                             "The country PBF in map/ is kept.")
     args = parser.parse_args()
 
     token = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
@@ -461,10 +516,16 @@ def main():
     log.info(f"  Zoom      : {args.zoom}")
     log.info(f"  DuckDB    : {db_path}")
     log.info(f"  Started   : {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
+    if args.refresh:
+        log.info(f"  Mode      : --refresh (deleting cached files before run)")
 
     t_total = time.time()
 
     try:
+        if args.refresh:
+            with StepTimer("[0/4] Refresh — delete cached files"):
+                refresh_area(args.name, pbf_dir, db_dir, output_dir)
+
         if args.country_url:
             with StepTimer("[0/4] Download country PBF"):
                 pbf_input = download_pbf(args.country_url, map_dir)
