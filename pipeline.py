@@ -680,7 +680,7 @@ def _pixel_to_congestion(r, g, b, a):
     h_deg = h * 360
     if s < 0.30 or v < 0.20:
         return None
-    if 90 <= h_deg <= 150 and s > 0.35 and v > 0.35:
+    if 90 <= h_deg <= 175 and s > 0.35 and v > 0.35:   # Google uses teal-green H≈159°
         return "low"
     if 20 <= h_deg < 90 and s > 0.45 and v > 0.55:
         return "moderate"
