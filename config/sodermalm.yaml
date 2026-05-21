@@ -1,6 +1,6 @@
 name: "sodermalm"
 pbf_path: "/home/kaveh/projects/osm-traffic-enrichment/map/sodermalm.osm.pbf"
-output_path: "/home/kaveh/projects/osm-traffic-enrichment/map"
+output_path: "/home/kaveh/projects/osm-traffic-enrichment/db"
 # → Creates: /home/kaveh/projects/osm-traffic-enrichment/map/sodermalm.duckdb
 
 boundary_path: "/home/kaveh/projects/osm-traffic-enrichment/boundaries/sodermalm.geojson"
