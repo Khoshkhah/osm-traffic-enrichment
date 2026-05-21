@@ -771,6 +771,14 @@ def fetch_and_match_google(db_path: Path, boundary_path: Path, zoom: int,
     google_dir = tiles_dir / "google"
     google_dir.mkdir(parents=True, exist_ok=True)
 
+    # Always delete cached Google tiles — they encode real-time traffic so
+    # reusing old tiles would give stale results that don't match Google Maps now.
+    stale = list(google_dir.glob("*.png"))
+    if stale:
+        for f in stale:
+            f.unlink()
+        log.info(f"  Deleted {len(stale)} cached Google tile(s) — fetching fresh data")
+
     # Load OSM edges from DuckDB
     con = duckdb.connect(str(db_path))
     con.execute("LOAD spatial")
