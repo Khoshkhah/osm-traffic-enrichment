@@ -31,11 +31,13 @@ ARGUMENT SUMMARY:
     --name         Output name used for all files  [required]
     --pbf          Path to a local .osm.pbf file  (optional if --place or --country-url given)
     --country-url  Geofabrik download URL  (optional if --place given)
-    --zoom         Mapbox tile zoom level, default 14
-    --config       Path to a duckOSM YAML config (optional, auto-generated if absent)
-    --refresh      Delete all area-specific cached files before running
+    --zoom             Mapbox tile zoom level, default 14
+    --config           Path to a duckOSM YAML config (optional, auto-generated if absent)
+    --refresh          Delete all area-specific cached files before running
+    --traffic-source   mapbox (default) | google
 
   See docs/pipeline_cli.md for full argument documentation.
+  See docs/traffic_status.md for congestion level definitions.
 
 PIPELINE STEPS:
     [opt] Refresh cache           (--refresh)
@@ -43,14 +45,19 @@ PIPELINE STEPS:
     [opt] Download country PBF    (--country-url or auto-detected from --place)
     [1/4] Filter PBF by boundary  (osmium extract)
     [2/4] Build road network      (duckOSM → DuckDB)
-    [3/4] Fetch Mapbox tiles      (traffic-v1 + streets-v8)
-    [4/4] Map match + enrich      (writes congestion to DuckDB)
+    --traffic-source mapbox (default):
+      [3/4] Fetch Mapbox tiles      (traffic-v1 + streets-v8)
+      [4/4] Map match + enrich      (writes congestion_mapbox to DuckDB)
+    --traffic-source google:
+      [3/4] Fetch & match Google    (PNG tiles → pixel sampling → congestion_google)
 
 OUTPUT:
-    db/{name}.duckdb                      enriched DuckDB
-    output/{name}_edges_traffic.geojson   road network with congestion
-    output/{name}_edges_traffic.csv       same without geometry
-    logs/pipeline_{name}_{timestamp}.log  full run log with summary
+    db/{name}.duckdb                        enriched DuckDB
+      driving.edges.congestion_mapbox       latest Mapbox congestion
+      driving.edges.congestion_google       latest Google congestion
+    output/{name}_edges_traffic.geojson     road network with congestion columns
+    output/{name}_edges_traffic.csv         same without geometry
+    logs/pipeline_{name}_{timestamp}.log    full run log with summary
 """
 
 import argparse
@@ -64,6 +71,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
+import colorsys
+
 import duckdb
 import geopandas as gpd
 import mapbox_vector_tile
@@ -71,8 +80,12 @@ import mercantile
 import numpy as np
 import requests
 from dotenv import load_dotenv
+from PIL import Image
 from shapely import get_coordinates
 from shapely.affinity import affine_transform
+from shapely.geometry import LineString
+from shapely.ops import transform as shapely_transform
+import pyproj
 from shapely.geometry import box, mapping, shape
 
 load_dotenv(Path(__file__).parent / ".env", override=True)
@@ -555,7 +568,53 @@ def _all_matches(t_geom, osm_gdf, sindex, buf=25, dir_thresh=45, overlap_thresh=
                 / max(osm_gdf.iloc[i].geometry.length, 1e-6) >= overlap_thresh]
 
 
+def _write_congestion_to_db(con, db_path, edges_df, edge_cong, source, name, zoom, n_segments, matched_at):
+    """Write congestion results to DuckDB: edges table, runs table, history table."""
+    col        = f"congestion_{source}"
+    col_at     = f"congestion_{source}_at"
+
+    # Ensure all four congestion columns exist
+    for c, default in [("congestion_mapbox","'no data'"), ("congestion_mapbox_at","NULL"),
+                        ("congestion_google","'no data'"), ("congestion_google_at","NULL")]:
+        dtype = "TIMESTAMP" if c.endswith("_at") else "VARCHAR"
+        con.execute(f"ALTER TABLE driving.edges ADD COLUMN IF NOT EXISTS {c} {dtype} DEFAULT {default}")
+
+    if edge_cong:
+        con.executemany(
+            f"UPDATE driving.edges SET {col} = ?, {col_at} = ? WHERE edge_id = ?",
+            [(cong, matched_at, eid) for eid, cong in edge_cong.items()]
+        )
+    log.info(f"  {col}: {len(edge_cong):,} edges updated")
+
+    # runs table
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS runs (
+            run_id INTEGER PRIMARY KEY, boundary_name VARCHAR, source VARCHAR,
+            zoom INTEGER, fetched_at TIMESTAMP, n_tiles INTEGER, n_segments INTEGER)
+    """)
+    con.execute("ALTER TABLE runs ADD COLUMN IF NOT EXISTS source VARCHAR")
+    run_id = con.execute("SELECT coalesce(max(run_id),0)+1 FROM runs").fetchone()[0]
+    con.execute("INSERT INTO runs VALUES (?,?,?,?,?,?,?)",
+                [run_id, name, source, zoom, matched_at, 0, n_segments])
+
+    # history
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS edge_congestion_history (
+            run_id INTEGER, edge_id INTEGER, source VARCHAR,
+            congestion VARCHAR, matched_at TIMESTAMP)
+    """)
+    con.execute("ALTER TABLE edge_congestion_history ADD COLUMN IF NOT EXISTS source VARCHAR")
+    if edge_cong:
+        con.executemany(
+            "INSERT INTO edge_congestion_history VALUES (?,?,?,?,?)",
+            [(run_id, int(eid), source, cong, matched_at) for eid, cong in edge_cong.items()]
+        )
+    log.info(f"  edge_congestion_history: {len(edge_cong):,} rows (run_id={run_id}, source={source})")
+
+
 def map_match(db_path: Path, traffic_file: Path, name: str, output_dir: Path) -> None:
+    matched_at = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
     con = duckdb.connect(str(db_path))
     con.execute("LOAD spatial")
     df = con.execute(
@@ -592,18 +651,198 @@ def map_match(db_path: Path, traffic_file: Path, name: str, output_dir: Path) ->
     log.info(f"  Edges matched   : {len(edge_cong):,} / {len(edges):,}  ({matched_pct:.1f}%)")
     log.info(f"  Total pairs     : {total_pairs:,}  (avg {total_pairs/max(len(traffic_m),1):.1f} per segment)")
 
-    con.execute("ALTER TABLE driving.edges ADD COLUMN IF NOT EXISTS congestion VARCHAR DEFAULT 'no data'")
-    con.executemany("UPDATE driving.edges SET congestion = ? WHERE edge_id = ?",
-                    [(c, e) for e, c in edge_cong.items()])
+    _write_congestion_to_db(con, db_path, edges, edge_cong, "mapbox", name, 0, len(traffic), matched_at)
     con.close()
-    log.info(f"  Congestion written to DuckDB: {db_path.name}")
 
-    edges["congestion"] = edges["edge_id"].map(edge_cong).fillna("no data")
-    cong_dist = edges["congestion"].value_counts().to_dict()
-    log.debug(f"  Congestion distribution: {cong_dist}")
+    edges["congestion_mapbox"] = edges["edge_id"].map(edge_cong).fillna("no data")
+    log.debug(f"  Distribution: {edges['congestion_mapbox'].value_counts().to_dict()}")
 
     geojson_out = output_dir / f"{name}_edges_traffic.geojson"
     csv_out     = output_dir / f"{name}_edges_traffic.csv"
+    edges.to_file(geojson_out, driver="GeoJSON")
+    edges.drop(columns=["geometry", "wkt_geom"], errors="ignore").to_csv(csv_out, index=False)
+    log.info(f"  GeoJSON saved   : {geojson_out.name}")
+    log.info(f"  CSV saved       : {csv_out.name}")
+
+
+# ── Step 3+4 (Google) — PNG tile fetch + direct pixel sampling ───────────────
+
+GOOGLE_CDN_URL  = "https://mt0.google.com/vt"
+GOOGLE_CDN_PARAMS = "m@321,traffic|en"
+MIN_TILE_SIZE   = 64   # pixels — 1×1 = invalid (no API key or rate-limited)
+
+
+def _pixel_to_congestion(r, g, b, a):
+    """Classify an RGBA pixel as a congestion level using HSV color space."""
+    if a < 200:
+        return None
+    h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+    h_deg = h * 360
+    if s < 0.30 or v < 0.20:
+        return None
+    if 90 <= h_deg <= 150 and s > 0.35 and v > 0.35:
+        return "low"
+    if 20 <= h_deg < 90 and s > 0.45 and v > 0.55:
+        return "moderate"
+    if (h_deg < 20 or h_deg > 340) and s > 0.50 and v > 0.40:
+        return "heavy"
+    if (h_deg < 20 or h_deg > 340) and s > 0.35 and v <= 0.40:
+        return "severe"
+    return None
+
+
+def _sample_edge_google(geom, tile_imgs, zoom):
+    """Sample Google traffic PNG tiles along an OSM edge. Returns congestion string."""
+    coords = get_coordinates(geom)
+    if len(coords) < 2:
+        return "no data"
+    proj    = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True).transform
+    line    = LineString(coords)
+    line_m  = shapely_transform(proj, line)
+    n_pts   = max(4, min(200, int(line_m.length / 2)))
+    results = []
+    for d in np.linspace(0, 1, n_pts):
+        pt  = line.interpolate(d, normalized=True)
+        lon, lat = pt.x, pt.y
+        tile = mercantile.tile(lon, lat, zoom)
+        key  = (tile.x, tile.y, tile.z)
+        if key not in tile_imgs:
+            continue
+        img    = tile_imgs[key]
+        w, h   = img.size
+        bounds = mercantile.bounds(tile)
+        col = max(0, min(w - 1, int((lon - bounds.west)  / (bounds.east  - bounds.west)  * w)))
+        row = max(0, min(h - 1, int((bounds.north - lat) / (bounds.north - bounds.south) * h)))
+        for dc in range(-1, 2):
+            for dr in range(-1, 2):
+                cong = _pixel_to_congestion(*img.getpixel((max(0, min(w-1, col+dc)),
+                                                            max(0, min(h-1, row+dr)))))
+                if cong:
+                    results.append(cong)
+    if not results:
+        return "no data"
+    return max(set(results), key=lambda c: SEVERITY.get(c, 0))
+
+
+def _download_google_tile(tile, out_dir, retries=3):
+    path = out_dir / f"{tile.z}_{tile.x}_{tile.y}.png"
+    if path.exists():
+        try:
+            img = Image.open(path)
+            if img.size[0] >= MIN_TILE_SIZE:
+                return tile, path
+            path.unlink()
+        except Exception:
+            path.unlink(missing_ok=True)
+    params  = {"lyrs": GOOGLE_CDN_PARAMS, "x": tile.x, "y": tile.y, "z": tile.z}
+    headers = {"User-Agent": "Mozilla/5.0"}
+    for attempt in range(retries):
+        try:
+            r = requests.get(GOOGLE_CDN_URL, params=params, headers=headers, timeout=(5, 20))
+        except requests.exceptions.Timeout:
+            time.sleep(2 ** attempt)
+            continue
+        if r.status_code == 200:
+            path.write_bytes(r.content)
+            try:
+                img = Image.open(path)
+                if img.size[0] < MIN_TILE_SIZE:
+                    path.unlink()
+                    return tile, None
+            except Exception:
+                path.unlink(missing_ok=True)
+                return tile, None
+            return tile, path
+        if r.status_code == 429:
+            time.sleep(2 ** attempt)
+        else:
+            return tile, None
+    return tile, None
+
+
+def fetch_and_match_google(db_path: Path, boundary_path: Path, zoom: int,
+                           name: str, tiles_dir: Path, output_dir: Path) -> None:
+    """Download Google Maps traffic PNG tiles and sample congestion directly on OSM edges.
+
+    No separate map-matching step needed — we sample pixel colors along each
+    OSM edge's own geometry, writing the result directly to congestion_google.
+    """
+    matched_at = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+    google_dir = tiles_dir / "google"
+    google_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load OSM edges from DuckDB
+    con = duckdb.connect(str(db_path))
+    con.execute("LOAD spatial")
+    df = con.execute(
+        "SELECT edge_id, highway, name, length_m, ST_AsText(geometry) wkt_geom "
+        "FROM driving.edges"
+    ).df()
+    con.close()
+    edges = gpd.GeoDataFrame(df, geometry=gpd.GeoSeries.from_wkt(df["wkt_geom"]),
+                             crs="EPSG:4326").reset_index(drop=True)
+    edges = edges[edges.geometry.geom_type.isin(["LineString", "MultiLineString"])]
+    log.info(f"  OSM edges loaded: {len(edges):,}")
+
+    # Find tiles for boundary
+    gdf      = gpd.read_file(boundary_path).to_crs("EPSG:4326")
+    boundary = gdf.geometry.union_all()
+    from shapely.geometry import box as shapely_box
+    w, s, e, n = boundary.bounds
+    tiles = [t for t in mercantile.tiles(w, s, e, n, zooms=zoom)
+             if boundary.intersects(shapely_box(*mercantile.bounds(t)))]
+    log.info(f"  Tiles           : {len(tiles)} at zoom {zoom}")
+
+    # Download PNG tiles in parallel
+    tile_paths = {}
+    failed = []
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futs = {pool.submit(_download_google_tile, t, google_dir): t for t in tiles}
+        for f in as_completed(futs):
+            tile, path = f.result()
+            if path:
+                tile_paths[tile] = path
+            else:
+                failed.append(tile)
+    log.info(f"  Downloaded      : {len(tile_paths)}/{len(tiles)} tiles")
+    if failed:
+        log.warning(f"  Failed tiles    : {len(failed)}")
+
+    # Load valid PNG tiles into memory
+    tile_imgs = {}
+    for tile, path in tile_paths.items():
+        try:
+            img = Image.open(path).convert("RGBA")
+            if img.size[0] >= MIN_TILE_SIZE:
+                tile_imgs[(tile.x, tile.y, tile.z)] = img
+        except Exception as ex:
+            log.debug(f"  Could not load {path.name}: {ex}")
+
+    if not tile_imgs:
+        log.error("  No valid tiles loaded — congestion_google will not be updated")
+        return
+
+    # Sample pixel colors along each edge
+    edge_cong = {}
+    for _, row in edges.iterrows():
+        cong = _sample_edge_google(row.geometry, tile_imgs, zoom)
+        if cong != "no data":
+            edge_cong[int(row["edge_id"])] = cong
+
+    matched_pct = len(edge_cong) / max(len(edges), 1) * 100
+    log.info(f"  Edges with data : {len(edge_cong):,} / {len(edges):,}  ({matched_pct:.1f}%)")
+    log.debug(f"  Distribution    : {dict(sorted({c: list(edge_cong.values()).count(c) for c in set(edge_cong.values())}.items()))}")
+
+    # Write to DuckDB
+    con = duckdb.connect(str(db_path))
+    con.execute("LOAD spatial")
+    _write_congestion_to_db(con, db_path, edges, edge_cong, "google", name, zoom, len(tiles), matched_at)
+    con.close()
+
+    # Export
+    edges["congestion_google"] = edges["edge_id"].map(edge_cong).fillna("no data")
+    geojson_out = output_dir / f"{name}_edges_traffic_google.geojson"
+    csv_out     = output_dir / f"{name}_edges_traffic_google.csv"
     edges.to_file(geojson_out, driver="GeoJSON")
     edges.drop(columns=["geometry", "wkt_geom"], errors="ignore").to_csv(csv_out, index=False)
     log.info(f"  GeoJSON saved   : {geojson_out.name}")
@@ -667,17 +906,25 @@ def main():
     bgroup.add_argument("--place",    help="Place name to fetch boundary automatically "
                                            "(e.g. 'Tartu, Estonia')")
     parser.add_argument("--name",     required=True, help="Area name (used for output filenames)")
-    parser.add_argument("--zoom",     type=int, default=14, help="Mapbox tile zoom level (default 14)")
+    parser.add_argument("--zoom",     type=int, default=14, help="Tile zoom level (default 14)")
     parser.add_argument("--config",   default=None, help="duckOSM YAML config (optional)")
     parser.add_argument("--refresh",  action="store_true",
-                        help="Delete all cached files for this area before running "
-                             "(filtered PBF, DuckDB, traffic GeoJSON/CSV). "
+                        help="Delete all cached files for this area before running. "
                              "The country PBF in map/ is kept.")
+    parser.add_argument("--traffic-source", choices=["mapbox", "google", "both"],
+                        default="both",
+                        help="Traffic data source: mapbox (default), google, or both. "
+                             "mapbox requires MAPBOX_ACCESS_TOKEN in .env. "
+                             "google uses the public Google Maps CDN (no key needed). "
+                             "both runs Mapbox then Google sequentially.")
     args = parser.parse_args()
 
+    use_mapbox = args.traffic_source in ("mapbox", "both")
+    use_google = args.traffic_source in ("google", "both")
+
     token = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
-    if not token or not token.startswith("pk."):
-        sys.exit("ERROR: set MAPBOX_ACCESS_TOKEN in .env (must start with pk.)")
+    if use_mapbox and (not token or not token.startswith("pk.")):
+        sys.exit("ERROR: --traffic-source mapbox requires MAPBOX_ACCESS_TOKEN in .env")
 
     config_path    = Path(args.config).resolve() if args.config else \
                      BASE_DIR / "config" / f"{args.name}.yaml"
@@ -700,6 +947,8 @@ def main():
     log.info(f"{'='*60}")
     log.info(f"  Area      : {args.name}")
     log.info(f"  Zoom      : {args.zoom}")
+    log.info(f"  Traffic   : {args.traffic_source}  "
+             f"({'Mapbox + Google' if args.traffic_source == 'both' else args.traffic_source.title()})")
     log.info(f"  DuckDB    : {db_path}")
     log.info(f"  Started   : {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
     if args.refresh:
@@ -757,11 +1006,18 @@ def main():
         with StepTimer("[2/4] Build road network (duckOSM)"):
             build_network(filtered_pbf, boundary, args.name, db_path, config_path)
 
-        with StepTimer("[3/4] Fetch Mapbox traffic tiles"):
-            fetch_traffic(boundary, args.zoom, token, tiles_dir, traffic_file)
+        # ── Traffic steps depend on selected source ───────────────────────
+        if use_mapbox:
+            with StepTimer("[3/4] Fetch Mapbox traffic tiles"):
+                fetch_traffic(boundary, args.zoom, token, tiles_dir, traffic_file)
+            with StepTimer("[4/4] Map match → congestion_mapbox"):
+                map_match(db_path, traffic_file, args.name, output_dir)
 
-        with StepTimer("[4/4] Map match + enrich DuckDB"):
-            map_match(db_path, traffic_file, args.name, output_dir)
+        if use_google:
+            label = "[3/4]" if not use_mapbox else "[5/5]"
+            with StepTimer(f"{label} Fetch & match Google → congestion_google"):
+                fetch_and_match_google(db_path, boundary, args.zoom,
+                                       args.name, tiles_dir, output_dir)
 
     except Exception as e:
         log.error(f"\nPipeline FAILED: {e}")
@@ -772,8 +1028,10 @@ def main():
     elapsed = time.time() - t_total
     write_summary(args.name, elapsed, log_path)
     log.info(f"\n  DuckDB  → {db_path}")
-    log.info(f"  GeoJSON → {output_dir}/{args.name}_edges_traffic.geojson")
-    log.info(f"  CSV     → {output_dir}/{args.name}_edges_traffic.csv")
+    if use_mapbox:
+        log.info(f"  Mapbox  → congestion_mapbox  ({output_dir.name}/{args.name}_edges_traffic.geojson)")
+    if use_google:
+        log.info(f"  Google  → congestion_google  ({output_dir.name}/{args.name}_edges_traffic_google.geojson)")
 
 
 if __name__ == "__main__":
