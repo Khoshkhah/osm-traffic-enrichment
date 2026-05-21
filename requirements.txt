@@ -11,6 +11,7 @@ numpy>=1.26
 matplotlib>=3.8
 h3>=4.0
 osmnx>=1.9                 # notebook 0: fetch boundaries by name from OSM
+Pillow>=10.0               # notebook 3b: read Google Maps traffic PNG tiles
 
 # duckOSM — install from the standalone repo:
 #   pip install -e ../duckOSM
