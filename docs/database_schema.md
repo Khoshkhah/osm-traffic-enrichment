@@ -62,22 +62,34 @@ Bidirectional roads produce two rows (forward + reverse, `is_reverse = TRUE`).
 | `from_cell` | BIGINT | H3 cell ID of the source node |
 | `to_cell` | BIGINT | H3 cell ID of the target node |
 | `lca_res` | TINYINT | Lowest Common Ancestor H3 resolution of from/to cells |
-| **`congestion`** | **VARCHAR** | **Real-time traffic status (added by notebook 4)** |
+| **`congestion_mapbox`** | **VARCHAR** | **Latest Mapbox congestion** (notebook 4) |
+| **`congestion_mapbox_at`** | **TIMESTAMP** | **When Mapbox data was last fetched** |
+| **`congestion_google`** | **VARCHAR** | **Latest Google Maps congestion** (notebook 3b) |
+| **`congestion_google_at`** | **TIMESTAMP** | **When Google data was last fetched** |
 
-**`congestion` values:** `low` · `moderate` · `heavy` · `severe` · `no data`
+**Congestion values:** `low` · `moderate` · `heavy` · `severe` · `no data`
 
-> `walking.edges` and `cycling.edges` have the same columns except `congestion`,
-> which is only populated for `driving.edges`.
+> **Two sources, independent columns.** Each source writes only its own column.
+> Run notebook 4 (Mapbox) and/or notebook 3b (Google) independently — they do not overwrite each other.
+> `walking.edges` and `cycling.edges` do not have congestion columns.
+
+**Why Google does not need map matching (notebook 4):**
+Mapbox provides road *segments* with different geometry from OSM edges → geometric matching needed.
+Google PNG tiles encode congestion as pixel colors → we sample directly along each OSM edge → no matching needed.
 
 **Example queries:**
 ```sql
--- All heavy congestion roads
-SELECT name, highway, length_m, congestion FROM driving.edges
-WHERE congestion = 'heavy' ORDER BY length_m DESC;
+-- Compare Mapbox vs Google for the same road
+SELECT name, highway, congestion_mapbox, congestion_mapbox_at,
+                      congestion_google,  congestion_google_at
+FROM driving.edges WHERE name IS NOT NULL LIMIT 10;
 
--- Network length by road type
-SELECT highway, count(*) edges, round(sum(length_m)/1000,1) km
-FROM driving.edges GROUP BY 1 ORDER BY 2 DESC;
+-- Roads where sources disagree
+SELECT edge_id, name, congestion_mapbox, congestion_google
+FROM driving.edges
+WHERE congestion_mapbox != 'no data'
+  AND congestion_google  != 'no data'
+  AND congestion_mapbox  != congestion_google;
 ```
 
 ---
@@ -181,16 +193,18 @@ Useful for debugging or accessing tags not carried into the routing schema.
 
 ## `main.runs` — pipeline execution log
 
-One row per complete run of notebooks 3 + 4. The `run_id` links all historical tables.
+One row per traffic fetch execution (notebook 3 for Mapbox, notebook 3b for Google).
+The `run_id` links all historical tables.
 
 | Column | Type | Description |
 |---|---|---|
 | `run_id` | INTEGER | Auto-incrementing run identifier |
 | `boundary_name` | VARCHAR | Name of the boundary (e.g. `sodermalm`) |
-| `zoom` | INTEGER | Mapbox tile zoom level used |
-| `fetched_at` | TIMESTAMP | UTC timestamp of the tile fetch |
+| **`source`** | **VARCHAR** | **`'mapbox'` or `'google'`** |
+| `zoom` | INTEGER | Tile zoom level used |
+| `fetched_at` | TIMESTAMP | UTC timestamp of the fetch |
 | `n_tiles` | INTEGER | Number of tiles downloaded |
-| `n_segments` | INTEGER | Number of raw Mapbox traffic segments decoded |
+| `n_segments` | INTEGER | Number of traffic segments decoded |
 
 **Example query:**
 ```sql
@@ -226,15 +240,16 @@ GROUP BY 1, 2, 4 ORDER BY 2;
 
 ## `main.edge_congestion_history` — congestion time series
 
-The main historical table. One row per matched edge per run.
-Use this to answer: *"how did congestion on road X change over time?"*
+The main historical table. One row per matched edge per run, per source.
+Use this to answer: *"how did congestion on road X change over time, and does Mapbox agree with Google?"*
 
 | Column | Type | Description |
 |---|---|---|
 | `run_id` | INTEGER | Links to `runs.run_id` |
 | `edge_id` | INTEGER | Links to `driving.edges.edge_id` |
+| **`source`** | **VARCHAR** | **`'mapbox'` or `'google'`** |
 | `congestion` | VARCHAR | Congestion value at this run |
-| `matched_at` | TIMESTAMP | UTC timestamp of the map matching |
+| `matched_at` | TIMESTAMP | UTC timestamp of the fetch/match |
 
 **Example queries:**
 ```sql
