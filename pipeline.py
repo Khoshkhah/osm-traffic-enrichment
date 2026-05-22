@@ -71,16 +71,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
-import colorsys
 
 import duckdb
 import geopandas as gpd
 import mapbox_vector_tile
+import math
 import mercantile
 import numpy as np
 import requests
+import threading
+import asyncio
+from collections import defaultdict
 from dotenv import load_dotenv
 from PIL import Image
+from scipy.spatial import cKDTree
 from shapely import get_coordinates
 from shapely.affinity import affine_transform
 from shapely.geometry import LineString
@@ -667,123 +671,143 @@ def map_match(db_path: Path, traffic_file: Path, name: str, output_dir: Path) ->
 
 # ── Step 3+4 (Google) — PNG tile fetch + direct pixel sampling ───────────────
 
-GOOGLE_CDN_URL  = "https://mt0.google.com/vt"
-GOOGLE_CDN_PARAMS = "m@321,traffic|en"
-MIN_TILE_SIZE   = 64   # pixels — 1×1 = invalid (no API key or rate-limited)
+def _rgb_to_lab(r, g, b):
+    """Convert sRGB (0-255) to CIE LAB (D65 illuminant)."""
+    def linearize(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+    r, g, b = linearize(r), linearize(g), linearize(b)
+    X = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.9505
+    Y = (r * 0.2126 + g * 0.7152 + b * 0.0722) / 1.0000
+    Z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.0890
+    def f(t): return t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116
+    return 116 * f(Y) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))
 
 
-def _pixel_to_congestion(r, g, b, a):
-    """Classify an RGBA pixel as a congestion level using HSV color space."""
-    if a < 200:
-        return None
-    h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
-    h_deg = h * 360
-    if s < 0.30 or v < 0.20:
-        return None
-    if 90 <= h_deg <= 175 and s > 0.35 and v > 0.35:   # Google uses teal-green H≈159°
-        return "low"
-    if 20 <= h_deg < 90 and s > 0.45 and v > 0.55:
-        return "moderate"
-    if (h_deg < 20 or h_deg > 340) and s > 0.50 and v > 0.40:
-        return "heavy"
-    if (h_deg < 20 or h_deg > 340) and s > 0.35 and v <= 0.40:
-        return "severe"
-    return None
+# Reference colors from Google Maps JS API TrafficLayer
+# Source: googletraffic R package (dime-worldbank)
+_TRAFFIC_REFS = [
+    ("low",      _rgb_to_lab(17,  214, 143)),   # #11D68F teal-green
+    ("moderate", _rgb_to_lab(255, 207,  67)),   # #FFCF43 yellow
+    ("heavy",    _rgb_to_lab(242,  78,  66)),   # #F24E42 red
+    ("severe",   _rgb_to_lab(169,  39,  39)),   # #A92727 dark red
+]
+_TRAFFIC_THRESHOLD = 25.0   # CIE76 units
 
 
-def _sample_edge_google(geom, tile_imgs, zoom):
-    """Sample Google traffic PNG tiles along an OSM edge. Returns congestion string."""
-    coords = get_coordinates(geom)
-    if len(coords) < 2:
-        return "no data"
-    proj    = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True).transform
-    line    = LineString(coords)
-    line_m  = shapely_transform(proj, line)
-    n_pts   = max(4, min(200, int(line_m.length / 2)))
-    results = []
-    for d in np.linspace(0, 1, n_pts):
-        pt  = line.interpolate(d, normalized=True)
-        lon, lat = pt.x, pt.y
-        tile = mercantile.tile(lon, lat, zoom)
-        key  = (tile.x, tile.y, tile.z)
-        if key not in tile_imgs:
-            continue
-        img    = tile_imgs[key]
-        w, h   = img.size
-        bounds = mercantile.bounds(tile)
-        col = max(0, min(w - 1, int((lon - bounds.west)  / (bounds.east  - bounds.west)  * w)))
-        row = max(0, min(h - 1, int((bounds.north - lat) / (bounds.north - bounds.south) * h)))
-        for dc in range(-1, 2):
-            for dr in range(-1, 2):
-                cong = _pixel_to_congestion(*img.getpixel((max(0, min(w-1, col+dc)),
-                                                            max(0, min(h-1, row+dr)))))
-                if cong:
-                    results.append(cong)
-    if not results:
-        return "no data"
-    return max(set(results), key=lambda c: SEVERITY.get(c, 0))
+def _build_traffic_raster(screenshot_img):
+    """Classify every pixel in the playwright screenshot. Returns uint8 (0=none 1-4=level)."""
+    arr    = np.array(screenshot_img).astype(np.float64)
+    rgb, a = arr[:, :, :3], arr[:, :, 3]
+    mask   = (a >= 200) & ~((rgb[:,:,0] > 230) & (rgb[:,:,1] > 230) & (rgb[:,:,2] > 230))
+    c      = rgb / 255.0
+    linear = np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+    Xr = (linear[:,:,0]*0.4124 + linear[:,:,1]*0.3576 + linear[:,:,2]*0.1805) / 0.9505
+    Yr =  linear[:,:,0]*0.2126 + linear[:,:,1]*0.7152 + linear[:,:,2]*0.0722
+    Zr = (linear[:,:,0]*0.0193 + linear[:,:,1]*0.1192 + linear[:,:,2]*0.9505) / 1.0890
+    def f(t): return np.where(t > 0.008856, t ** (1/3), 7.787*t + 16/116)
+    lab  = np.stack([116*f(Yr) - 16, 500*(f(Xr) - f(Yr)), 200*(f(Yr) - f(Zr))], axis=-1)
+    refs = np.array([ref for _, ref in _TRAFFIC_REFS], dtype=np.float64)
+    diff = lab[:, :, np.newaxis, :] - refs[np.newaxis, np.newaxis, :, :]
+    dists = np.sqrt((diff ** 2).sum(axis=-1))
+    raster  = np.zeros(rgb.shape[:2], dtype=np.uint8)
+    traffic = mask & (dists.min(axis=-1) <= _TRAFFIC_THRESHOLD)
+    raster[traffic] = dists.argmin(axis=-1)[traffic] + 1
+    return raster
 
 
-def _download_google_tile(tile, out_dir, retries=3):
-    path = out_dir / f"{tile.z}_{tile.x}_{tile.y}.png"
-    if path.exists():
-        try:
-            img = Image.open(path)
-            if img.size[0] >= MIN_TILE_SIZE:
-                return tile, path
-            path.unlink()
-        except Exception:
-            path.unlink(missing_ok=True)
-    params  = {"lyrs": GOOGLE_CDN_PARAMS, "x": tile.x, "y": tile.y, "z": tile.z}
-    headers = {"User-Agent": "Mozilla/5.0"}
-    for attempt in range(retries):
-        try:
-            r = requests.get(GOOGLE_CDN_URL, params=params, headers=headers, timeout=(5, 20))
-        except requests.exceptions.Timeout:
-            time.sleep(2 ** attempt)
-            continue
-        if r.status_code == 200:
-            path.write_bytes(r.content)
-            try:
-                img = Image.open(path)
-                if img.size[0] < MIN_TILE_SIZE:
-                    path.unlink()
-                    return tile, None
-            except Exception:
-                path.unlink(missing_ok=True)
-                return tile, None
-            return tile, path
-        if r.status_code == 429:
-            time.sleep(2 ** attempt)
-        else:
-            return tile, None
-    return tile, None
+def _render_playwright_screenshot(boundary_path: Path, zoom: int, api_key: str,
+                                   proj_fwd, proj_inv):
+    """Render Google Maps traffic via playwright. Returns (img, x_min_m, y_max_m, pixel_scale)."""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        raise RuntimeError("playwright not installed — run: pip install playwright && playwright install chromium")
+    from io import BytesIO
+
+    gdf      = gpd.read_file(boundary_path).to_crs("EPSG:4326")
+    boundary = gdf.geometry.union_all()
+    bw, bs, be, bn = boundary.bounds
+    pad_x = (be - bw) * 0.03;  pad_y = (bn - bs) * 0.03
+    bw -= pad_x;  be += pad_x;  bs -= pad_y;  bn += pad_y
+
+    x_min_m, y_min_m = proj_fwd.transform(bw, bs)
+    x_max_m, y_max_m = proj_fwd.transform(be, bn)
+    pixel_scale = 40075016.686 / (256 * (2 ** zoom))
+    img_w = math.ceil((x_max_m - x_min_m) / pixel_scale)
+    img_h = math.ceil((y_max_m - y_min_m) / pixel_scale)
+
+    # Cap screenshot to PIL's safe limit (~170 MP) by reducing zoom if needed
+    MAX_PIXELS = 160_000_000
+    while img_w * img_h > MAX_PIXELS and zoom > 12:
+        zoom       -= 1
+        pixel_scale = 40075016.686 / (256 * (2 ** zoom))
+        img_w       = math.ceil((x_max_m - x_min_m) / pixel_scale)
+        img_h       = math.ceil((y_max_m - y_min_m) / pixel_scale)
+        log.warning(f"  Screenshot too large — reduced zoom to {zoom} ({img_w}×{img_h} px)")
+
+    cx_lng, cx_lat = proj_inv.transform((x_min_m + x_max_m) / 2, (y_min_m + y_max_m) / 2)
+
+    html = f"""<!DOCTYPE html>
+<html><head>
+  <style>html,body{{margin:0;padding:0;overflow:hidden;}}#map{{width:{img_w}px;height:{img_h}px;}}</style>
+  <script src="https://maps.googleapis.com/maps/api/js?key={api_key}"></script>
+</head><body><div id="map"></div>
+<script>
+  const map = new google.maps.Map(document.getElementById('map'), {{
+    center: {{lat:{cx_lat}, lng:{cx_lng}}}, zoom: {zoom}, disableDefaultUI: true,
+    styles: [
+      {{elementType:'labels',   stylers:[{{visibility:'off'}}]}},
+      {{elementType:'geometry', stylers:[{{visibility:'off'}}]}},
+      {{featureType:'road', elementType:'geometry', stylers:[{{visibility:'on'}},{{color:'#ffffff'}}]}},
+      {{featureType:'landscape', stylers:[{{color:'#ffffff'}},{{visibility:'on'}}]}}
+    ]
+  }});
+  new google.maps.TrafficLayer().setMap(map);
+  map.addListener('tilesloaded', () => {{ window._ready = true; }});
+</script></body></html>"""
+
+    async def _render(html, w, h):
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch()
+            page    = await browser.new_page(viewport={"width": w, "height": h})
+            await page.set_content(html, wait_until="domcontentloaded")
+            await page.wait_for_function("window._ready === true", timeout=30000)
+            await page.wait_for_timeout(2000)
+            data = await page.screenshot()
+            await browser.close()
+            return data
+
+    _out = {}
+    def _run(): _out["png"] = asyncio.run(_render(html, img_w, img_h))
+    t = threading.Thread(target=_run)
+    t.start()
+    t.join(timeout=60)
+    if "png" not in _out:
+        raise RuntimeError("Playwright rendering timed out after 60 s")
+
+    img = Image.open(BytesIO(_out["png"])).convert("RGBA")
+    return img, x_min_m, y_max_m, pixel_scale
 
 
 def fetch_and_match_google(db_path: Path, boundary_path: Path, zoom: int,
-                           name: str, tiles_dir: Path, output_dir: Path) -> None:
-    """Download Google Maps traffic PNG tiles and sample congestion directly on OSM edges.
+                           name: str, output_dir: Path) -> None:
+    """Render Google Maps traffic via playwright and match to OSM edges using bearing-based approach."""
+    matched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-    No separate map-matching step needed — we sample pixel colors along each
-    OSM edge's own geometry, writing the result directly to congestion_google.
-    """
-    matched_at = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-    google_dir = tiles_dir / "google"
-    google_dir.mkdir(parents=True, exist_ok=True)
+    api_key = os.environ.get("GOOGLE_MAPS_API_KEY", "")
+    if not api_key:
+        log.error("  GOOGLE_MAPS_API_KEY not set in .env — skipping Google traffic")
+        return
 
-    # Always delete cached Google tiles — they encode real-time traffic so
-    # reusing old tiles would give stale results that don't match Google Maps now.
-    stale = list(google_dir.glob("*.png"))
-    if stale:
-        for f in stale:
-            f.unlink()
-        log.info(f"  Deleted {len(stale)} cached Google tile(s) — fetching fresh data")
+    proj_fwd = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    proj_inv = pyproj.Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
 
-    # Load OSM edges from DuckDB
+    # Load edges (osm_id required for way-identity matching)
     con = duckdb.connect(str(db_path))
     con.execute("LOAD spatial")
     df = con.execute(
-        "SELECT edge_id, highway, name, length_m, ST_AsText(geometry) wkt_geom "
+        "SELECT edge_id, osm_id, highway, name, length_m, ST_AsText(geometry) wkt_geom "
         "FROM driving.edges"
     ).df()
     con.close()
@@ -792,59 +816,107 @@ def fetch_and_match_google(db_path: Path, boundary_path: Path, zoom: int,
     edges = edges[edges.geometry.geom_type.isin(["LineString", "MultiLineString"])]
     log.info(f"  OSM edges loaded: {len(edges):,}")
 
-    # Find tiles for boundary
-    gdf      = gpd.read_file(boundary_path).to_crs("EPSG:4326")
-    boundary = gdf.geometry.union_all()
-    from shapely.geometry import box as shapely_box
-    w, s, e, n = boundary.bounds
-    tiles = [t for t in mercantile.tiles(w, s, e, n, zooms=zoom)
-             if boundary.intersects(shapely_box(*mercantile.bounds(t)))]
-    log.info(f"  Tiles           : {len(tiles)} at zoom {zoom}")
+    # Render screenshot
+    log.info(f"  Rendering playwright screenshot (zoom={zoom})...")
+    screenshot_img, x_min_m, y_max_m, pixel_scale = _render_playwright_screenshot(
+        boundary_path, zoom, api_key, proj_fwd, proj_inv)
+    img_w, img_h = screenshot_img.size
+    log.info(f"  Screenshot      : {img_w}×{img_h} px  ({pixel_scale:.2f} m/px)")
 
-    # Download PNG tiles in parallel
-    tile_paths = {}
-    failed = []
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        futs = {pool.submit(_download_google_tile, t, google_dir): t for t in tiles}
-        for f in as_completed(futs):
-            tile, path = f.result()
-            if path:
-                tile_paths[tile] = path
-            else:
-                failed.append(tile)
-    log.info(f"  Downloaded      : {len(tile_paths)}/{len(tiles)} tiles")
-    if failed:
-        log.warning(f"  Failed tiles    : {len(failed)}")
-
-    # Load valid PNG tiles into memory
-    tile_imgs = {}
-    for tile, path in tile_paths.items():
-        try:
-            img = Image.open(path).convert("RGBA")
-            if img.size[0] >= MIN_TILE_SIZE:
-                tile_imgs[(tile.x, tile.y, tile.z)] = img
-        except Exception as ex:
-            log.debug(f"  Could not load {path.name}: {ex}")
-
-    if not tile_imgs:
-        log.error("  No valid tiles loaded — congestion_google will not be updated")
+    # Build traffic raster
+    boundary_raster = _build_traffic_raster(screenshot_img)
+    counts = {lvl: int((boundary_raster == i+1).sum()) for i, (lvl, _) in enumerate(_TRAFFIC_REFS)}
+    total  = int((boundary_raster > 0).sum())
+    log.info(f"  Traffic pixels  : {total:,}  {counts}")
+    if total == 0:
+        log.warning("  No traffic pixels found — congestion_google not updated")
         return
 
-    # Sample pixel colors along each edge
-    edge_cong = {}
-    for _, row in edges.iterrows():
-        cong = _sample_edge_google(row.geometry, tile_imgs, zoom)
-        if cong != "no data":
-            edge_cong[int(row["edge_id"])] = cong
+    # Traffic pixels → EPSG:3857
+    traffic_rows, traffic_cols = np.where(boundary_raster > 0)
+    traffic_vals = boundary_raster[traffic_rows, traffic_cols]
+    pixel_xs  = x_min_m + traffic_cols * pixel_scale
+    pixel_ys  = y_max_m - traffic_rows * pixel_scale
+    pixel_pts = np.column_stack([pixel_xs, pixel_ys])
 
+    # Bearing-based matching parameters
+    MATCH_BUFFER_M    = 10
+    NEIGHBOR_RADIUS_M = 25
+    BEARING_THRESHOLD = 40
+    MIN_NEIGHBORS     = 5
+
+    # Edge sample points with local bearing
+    edge_sample_pts      = []
+    edge_sample_eids     = []
+    edge_sample_oids     = []
+    edge_sample_bearings = []
+
+    for _, row in edges.iterrows():
+        geom_m = shapely_transform(proj_fwd.transform, row.geometry)
+        n_pts  = max(4, min(int(geom_m.length / 2), 500))
+        oid    = int(row["osm_id"]) if int(row["osm_id"]) > 0 else -int(row["edge_id"])
+        pts_m  = [geom_m.interpolate(d, normalized=True) for d in np.linspace(0.05, 0.95, n_pts)]
+        for j, pt in enumerate(pts_m):
+            prev = pts_m[max(0, j - 1)]
+            nxt  = pts_m[min(len(pts_m) - 1, j + 1)]
+            dx, dy  = nxt.x - prev.x, nxt.y - prev.y
+            bearing = np.degrees(np.arctan2(dx, dy)) % 180
+            edge_sample_pts.append((pt.x, pt.y))
+            edge_sample_eids.append(int(row["edge_id"]))
+            edge_sample_oids.append(oid)
+            edge_sample_bearings.append(bearing)
+
+    edge_pts_arr      = np.array(edge_sample_pts)
+    edge_eids_arr     = np.array(edge_sample_eids,     dtype=np.int64)
+    edge_oids_arr     = np.array(edge_sample_oids,     dtype=np.int64)
+    edge_bearings_arr = np.array(edge_sample_bearings, dtype=np.float64)
+    edge_tree         = cKDTree(edge_pts_arr)
+    traffic_tree      = cKDTree(pixel_pts)
+    log.info(f"  Edge sample pts : {len(edge_sample_pts):,}")
+
+    nearby_edges   = edge_tree.query_ball_point(pixel_pts,   r=MATCH_BUFFER_M)
+    nearby_traffic = traffic_tree.query_ball_point(pixel_pts, r=NEIGHBOR_RADIUS_M)
+
+    INT_TO_LEVEL = {1: "low", 2: "moderate", 3: "heavy", 4: "severe"}
+    edge_pixel_vals = defaultdict(list)
+    n_matched = n_no_dir = n_no_bear = n_ambig = n_outside = 0
+
+    for i in range(len(pixel_pts)):
+        nb_e = nearby_edges[i]
+        if not nb_e:
+            n_outside += 1; continue
+        nb_tr = nearby_traffic[i]
+        if len(nb_tr) < MIN_NEIGHBORS:
+            n_no_dir += 1; continue
+        neighbor_pts   = pixel_pts[nb_tr]
+        cov            = np.cov(neighbor_pts.T)
+        _, eigvecs     = np.linalg.eigh(cov)
+        direction      = eigvecs[:, 1]
+        stripe_bearing = np.degrees(np.arctan2(direction[0], direction[1])) % 180
+        nb_arr  = np.array(nb_e)
+        eb      = edge_bearings_arr[nb_arr]
+        diffs   = np.abs(stripe_bearing - eb) % 180
+        diffs   = np.minimum(diffs, 180 - diffs)
+        ok      = diffs <= BEARING_THRESHOLD
+        if not ok.any():
+            n_no_bear += 1; continue
+        nb_f = nb_arr[ok]
+        if len(np.unique(edge_oids_arr[nb_f])) > 1:
+            n_ambig += 1; continue
+        dists_local = np.linalg.norm(edge_pts_arr[nb_f] - pixel_pts[i], axis=1)
+        eid = int(edge_eids_arr[nb_f[np.argmin(dists_local)]])
+        edge_pixel_vals[eid].append(int(traffic_vals[i]))
+        n_matched += 1
+
+    edge_cong   = {eid: INT_TO_LEVEL[max(vals)] for eid, vals in edge_pixel_vals.items()}
     matched_pct = len(edge_cong) / max(len(edges), 1) * 100
-    log.info(f"  Edges with data : {len(edge_cong):,} / {len(edges):,}  ({matched_pct:.1f}%)")
-    log.debug(f"  Distribution    : {dict(sorted({c: list(edge_cong.values()).count(c) for c in set(edge_cong.values())}.items()))}")
+    log.info(f"  Edges matched   : {len(edge_cong):,} / {len(edges):,}  ({matched_pct:.1f}%)")
+    log.info(f"  matched={n_matched:,} no_dir={n_no_dir:,} no_bear={n_no_bear:,} ambig={n_ambig:,} outside={n_outside:,}")
 
     # Write to DuckDB
     con = duckdb.connect(str(db_path))
     con.execute("LOAD spatial")
-    _write_congestion_to_db(con, db_path, edges, edge_cong, "google", name, zoom, len(tiles), matched_at)
+    _write_congestion_to_db(con, db_path, edges, edge_cong, "google", name, zoom, total, matched_at)
     con.close()
 
     # Export
@@ -914,7 +986,7 @@ def main():
     bgroup.add_argument("--place",    help="Place name to fetch boundary automatically "
                                            "(e.g. 'Tartu, Estonia')")
     parser.add_argument("--name",     required=True, help="Area name (used for output filenames)")
-    parser.add_argument("--zoom",     type=int, default=14, help="Tile zoom level (default 14)")
+    parser.add_argument("--zoom",     type=int, default=16, help="Tile zoom level (default 16; zoom 16 recommended for Google traffic)")
     parser.add_argument("--config",   default=None, help="duckOSM YAML config (optional)")
     parser.add_argument("--refresh",  action="store_true",
                         help="Delete all cached files for this area before running. "
@@ -1025,7 +1097,7 @@ def main():
             label = "[3/4]" if not use_mapbox else "[5/5]"
             with StepTimer(f"{label} Fetch & match Google → congestion_google"):
                 fetch_and_match_google(db_path, boundary, args.zoom,
-                                       args.name, tiles_dir, output_dir)
+                                       args.name, output_dir)
 
     except Exception as e:
         log.error(f"\nPipeline FAILED: {e}")

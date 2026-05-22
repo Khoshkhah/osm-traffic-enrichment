@@ -22,10 +22,21 @@ Required:
   --name NAME              Area name used for all output filenames
 
 Optional:
-  --zoom INT               Mapbox tile zoom level  [default: 14]
+  --zoom INT               Tile zoom level  [default: 16]
+                           Mapbox: 14 is sufficient. Google: 16 recommended (~2.4 m/px).
+                           For very large areas the pipeline auto-reduces zoom to stay
+                           within PIL's image-size limit (160 MP).
+  --traffic-source SOURCE  mapbox | google | both  [default: both]
   --config FILE            duckOSM YAML config path
   --refresh                Delete cached files for this area before running
 ```
+
+### Required environment variables (`.env`)
+
+| Variable | Source | Required for |
+|---|---|---|
+| `MAPBOX_ACCESS_TOKEN` | [account.mapbox.com](https://account.mapbox.com/access-tokens/) | `--traffic-source mapbox\|both` |
+| `GOOGLE_MAPS_API_KEY` | Google Cloud Console — **Maps JavaScript API** | `--traffic-source google\|both` |
 
 ---
 

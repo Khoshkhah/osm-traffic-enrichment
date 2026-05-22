@@ -81,8 +81,9 @@ A free-flowing road gets `low`, NOT `no data`.
 ## How Google Maps computes congestion
 
 ### Data source
-Google Maps traffic tile CDN (`mt0.google.com/vt?lyrs=m@321,traffic|en`) —
-served as 256×256 RGBA PNG raster images.
+Google Maps JavaScript API (`TrafficLayer`) rendered by a headless Chromium browser
+via **Playwright** — the same approach used by the
+[googletraffic R package](https://github.com/dime-worldbank/googletraffic).
 
 ### How Google collects data
 Google aggregates GPS data from Android devices (with user consent), Waze community
@@ -90,62 +91,74 @@ reports, and road sensors to estimate real-time speeds across its road network.
 The methodology is similar to Mapbox: compare current speed against a historical baseline
 for the same road at the same time of day.
 
-### How congestion is encoded in the tile
-Unlike Mapbox (which uses text properties in a vector format), Google encodes
-congestion as **pixel color** drawn directly onto the road lines in the PNG image.
-Each congested road segment is painted in a color corresponding to its level.
-Non-congested roads keep their default gray/white road color.
+### How congestion is encoded
+Unlike Mapbox (which uses text properties in a vector format), Google's `TrafficLayer`
+renders congestion as **pixel color** painted on road lines. Each congested segment
+is drawn in one of four colors; non-congested roads stay white (in our custom rendering).
 
-### How the pipeline reads it — HSV pixel color analysis
+### How the pipeline reads it — Playwright rendering + bearing-based matching
 
-Because there is no text property to read, the pipeline must classify
-each pixel's color. We use the **HSV color space** (Hue, Saturation, Value)
-which separates color from brightness, making thresholds more robust
-than raw RGB comparisons across lighting conditions.
+**Step 1 — Render a clean screenshot**
 
-| HSV component | Meaning | Range |
+Instead of fetching CDN tiles (which contain road labels, icons, and signs), the pipeline
+renders a custom Google Maps HTML page in a headless browser with:
+- All labels → `visibility: off`
+- All geometry → `visibility: off` (buildings, water, etc.)
+- Roads → `visibility: on`, color `#ffffff` (white)
+- Background → `#ffffff` (white)
+- `TrafficLayer` added on top
+
+The result is a clean PNG where **only traffic color stripes are visible**.
+No false positives from map text, signs, or icons.
+
+**Step 2 — Classify pixels (LAB color distance)**
+
+The pipeline classifies each non-white pixel by computing its
+**CIE76 distance in LAB color space** to four reference colors taken from the
+`googletraffic` R package — the exact colors the Google Maps JS API renders:
+
+| Congestion | Hex | RGB |
 |---|---|---|
-| **H** (Hue) | Which color — red=0°, yellow=60°, green=120° | 0–360° |
-| **S** (Saturation) | How vivid — 0=gray, 1=pure color | 0–1 |
-| **V** (Value) | Brightness — 0=black, 1=fully bright | 0–1 |
+| `low` | `#11D68F` | (17, 214, 143) — teal-green |
+| `moderate` | `#FFCF43` | (255, 207, 67) — yellow |
+| `heavy` | `#F24E42` | (242, 78, 66) — red |
+| `severe` | `#A92727` | (169, 39, 39) — dark red |
 
-**Color → congestion mapping used by the pipeline:**
+A pixel is assigned to the nearest reference if the CIE76 distance is ≤ 25 units;
+otherwise it remains `no data`. LAB is perceptually uniform — equal distance means
+equal visual difference, making the threshold robust to JPEG/PNG compression artifacts.
 
-| Congestion | Pixel color | Hue | Saturation | Value |
-|---|---|---|---|---|
-| `low` | 🟢 Green | 90–150° | > 35% | > 35% |
-| `moderate` | 🟠 Orange / Yellow | 20–60° | > 45% | > 55% |
-| `heavy` | 🔴 Red | < 20° or > 340° | > 50% | > 40% |
-| `severe` | ⬛ Dark red | < 20° or > 340° | > 35% | ≤ 40% |
-| `no data` | ⬜ Gray / transparent | any | < 30% | any |
+**Step 3 — Bearing-based pixel-to-edge matching**
 
-**Why gray pixels map to `no data`:**
-The default road color on a Google Maps roadmap tile is light gray.
-Gray has very low saturation (S < 30%), so it is rejected by all congestion checks.
-This means roads with no active congestion remain `no data` in our output.
+Traffic stripes always run *along* roads. The pipeline exploits this to resolve
+intersection ambiguity:
 
-**Sampling strategy** — why dense sampling is needed:
+1. Extract all classified traffic pixels as EPSG:3857 coordinates
+2. For each pixel:
+   - Estimate the local **stripe direction** (PCA on neighboring traffic pixels within 25 m)
+   - Find candidate edge sample points within **10 m**
+   - Keep only candidates whose local bearing is within **40°** of the stripe bearing
+   - If only one OSM way (`osm_id`) remains after the bearing filter → assign to nearest edge
+   - If multiple ways remain (true intersection) → **discard** the pixel
+3. Aggregate: each edge takes the most severe level among its assigned pixels
 
-Traffic-colored pixels are very sparse (a road is only 1–3 pixels wide in a 256×256 tile,
-and colored segments represent only ~0.1–0.5% of all pixels). To reliably detect them:
-
-1. Interpolate sample points along each OSM edge at **1 point per ~2 metres**
-   (up to 200 points per edge, computed in Web Mercator metres for accuracy)
-2. At each point, check a **3×3 pixel neighbourhood** around the exact position
-3. Return the most severe congestion found across all samples
+This avoids the intersection problem: pixels at road crossings are naturally discarded
+because two perpendicular roads cannot both match the stripe bearing.
 
 ```
 Pipeline steps for Google Maps:
-  1. Download roadmap+traffic PNG tiles (mt0.google.com CDN)  [notebook 3b]
-  2. Load tiles into memory as RGBA PIL Images (O(1) pixel lookup)
-  3. For each OSM edge from DuckDB:
-     a. Project geometry to metres (EPSG:3857) to compute length
-     b. Interpolate 1 point per ~2 m along the edge (max 200)
-     c. For each point: convert lon/lat → tile (x,y,z) → pixel (col, row)
-     d. Check 3×3 pixel neighbourhood → classify each with RGB→HSV→level
-     e. Return the most severe level found
-  4. Write directly to driving.edges.congestion_google
-     NO separate map-matching step — OSM edge geometry is used directly
+  1. Render custom-styled Google Maps HTML in Playwright  [notebook 3b / pipeline]
+     — white bg, white roads, TrafficLayer only, no labels/icons
+  2. Build traffic raster: classify every pixel with CIE76 LAB distance
+     — produces a uint8 array (0=none, 1=low, 2=moderate, 3=heavy, 4=severe)
+  3. For each traffic pixel:
+     a. Estimate local stripe direction from neighboring traffic pixels (PCA)
+     b. Find candidate edges within 10 m
+     c. Filter by bearing alignment (max 40° difference)
+     d. Require single osm_id among filtered candidates (discard intersections)
+     e. Assign to nearest edge
+  4. Aggregate by edge: most severe level wins
+  5. Write to driving.edges.congestion_google + edge_congestion_history
 ```
 
 ---
