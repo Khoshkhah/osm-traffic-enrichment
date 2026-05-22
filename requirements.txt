@@ -10,8 +10,15 @@ pandas>=2.0
 numpy>=1.26
 matplotlib>=3.8
 h3>=4.0
+PyYAML>=6.0                # config file parsing
+pyproj>=3.6                # google_traffic.py: WGS84 ↔ Web Mercator
+scipy>=1.11                # google_traffic.py: cKDTree for pixel/edge matching
+Pillow>=10.0               # google_traffic.py: read Playwright PNG screenshot
+playwright>=1.40           # google_traffic.py: render Google Maps headless
 osmnx>=1.9                 # notebook 0: fetch boundaries by name from OSM
-Pillow>=10.0               # notebook 3b: read Google Maps traffic PNG tiles
+
+# After pip install, also run:
+#   playwright install chromium
 
 # duckOSM — install from the standalone repo:
 #   pip install -e ../duckOSM

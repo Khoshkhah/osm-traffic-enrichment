@@ -45,9 +45,8 @@ pipeline_traffic.py          (run regularly — hourly / daily)
 
 ```
 osm-traffic-enrichment/
-├── pipeline_network.py              # Build network + H3 cells
-├── pipeline_traffic.py              # Fetch traffic from all sources
-├── pipeline.py                      # Combined wrapper (runs both)
+├── pipeline_network.py              # Build network + H3 cells (run once)
+├── pipeline_traffic.py              # Fetch traffic from all sources (run regularly)
 │
 ├── scripts/
 │   ├── traffic_db.py                # Python library for querying the DuckDB

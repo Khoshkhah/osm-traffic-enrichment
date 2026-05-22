@@ -7,7 +7,12 @@ Two separate pipelines handle different responsibilities:
 | `pipeline_network.py` | Build OSM road network + H3 boundary cells | Once per area (or on rebuild) |
 | `pipeline_traffic.py` | Fetch traffic + write to history tables | Regularly (hourly / daily) |
 
-`pipeline.py` is a combined wrapper that runs both in sequence.
+Chain them for a full build from scratch:
+
+```bash
+python pipeline_network.py --config config/tartu.yaml && \
+python pipeline_traffic.py --config config/tartu_traffic.yaml
+```
 
 ---
 
