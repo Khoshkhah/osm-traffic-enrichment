@@ -1,0 +1,15 @@
+# Traffic config for Nacka, Stockholm
+# Usage: python pipeline_traffic.py --config config/nacka_traffic.yaml
+
+name: nacka
+db_path: db/nacka.duckdb
+refresh: false
+
+traffic_sources:
+  - mapbox
+  - google
+  - tomtom
+
+mapbox_zoom: 14
+google_zoom: 16
+tomtom_zoom: 14

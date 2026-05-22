@@ -26,12 +26,13 @@ sodermalm.duckdb
 │   └── turn_restrictions
 │
 └── main.*           Enrichment data added by this pipeline
-    ├── boundary             Boundary polygon from notebook 0
-    ├── visualization_metadata  Map center/zoom for web apps
-    ├── runs                 One row per Mapbox fetch execution
-    ├── traffic_segments     Raw Mapbox traffic segments per run
-    ├── edge_congestion_history  Time-series congestion per edge
-    └── boundary_cells       H3 hexagon grid covering the boundary
+    ├── boundary                   Boundary polygon from notebook 0
+    ├── visualization_metadata     Map center/zoom for web apps
+    ├── runs                       One row per traffic fetch execution (all sources)
+    ├── mapbox_congestion_history  Mapbox congestion time-series per edge
+    ├── google_congestion_history  Google congestion time-series per edge
+    ├── tomtom_congestion_history  TomTom congestion + raw traffic_level per edge
+    └── boundary_cells             H3 hexagon grid covering the boundary
 ```
 
 ---
@@ -62,34 +63,35 @@ Bidirectional roads produce two rows (forward + reverse, `is_reverse = TRUE`).
 | `from_cell` | BIGINT | H3 cell ID of the source node |
 | `to_cell` | BIGINT | H3 cell ID of the target node |
 | `lca_res` | TINYINT | Lowest Common Ancestor H3 resolution of from/to cells |
-| **`congestion_mapbox`** | **VARCHAR** | **Latest Mapbox congestion** (notebook 4) |
-| **`congestion_mapbox_at`** | **TIMESTAMP** | **When Mapbox data was last fetched** |
-| **`congestion_google`** | **VARCHAR** | **Latest Google Maps congestion** (notebook 3b) |
-| **`congestion_google_at`** | **TIMESTAMP** | **When Google data was last fetched** |
-
 **Congestion values:** `low` · `moderate` · `heavy` · `severe` · `no data`
 
-> **Two sources, independent columns.** Each source writes only its own column.
-> Run notebook 4 (Mapbox) and/or notebook 3b (Google) independently — they do not overwrite each other.
-> `walking.edges` and `cycling.edges` do not have congestion columns.
+> `driving.edges` contains **no traffic columns**. Congestion is stored exclusively in
+> per-source history tables (`mapbox_congestion_history`, etc.) and read via CTEs at query
+> time using the `traffic_db` library.
+> `walking.edges` and `cycling.edges` also have no traffic columns.
 
-**Why Google does not need map matching (notebook 4):**
-Mapbox provides road *segments* with different geometry from OSM edges → geometric matching needed.
-Google PNG tiles encode congestion as pixel colors → we sample directly along each OSM edge → no matching needed.
+**Example queries (via `traffic_db`):**
+```python
+with TrafficDB('db/sodermalm.duckdb') as db:
+    # Latest congestion per edge for a specific source
+    edges = db.get_edges(source='mapbox')
 
-**Example queries:**
+    # Compare two sources
+    both = db.get_congestion_comparison(sources=['mapbox', 'google'])
+```
+
+**Raw SQL using the CTE pattern:**
 ```sql
--- Compare Mapbox vs Google for the same road
-SELECT name, highway, congestion_mapbox, congestion_mapbox_at,
-                      congestion_google,  congestion_google_at
-FROM driving.edges WHERE name IS NOT NULL LIMIT 10;
-
--- Roads where sources disagree
-SELECT edge_id, name, congestion_mapbox, congestion_google
-FROM driving.edges
-WHERE congestion_mapbox != 'no data'
-  AND congestion_google  != 'no data'
-  AND congestion_mapbox  != congestion_google;
+WITH latest_mapbox AS (
+    SELECT h.edge_id, h.congestion
+    FROM mapbox_congestion_history h
+    JOIN runs r ON h.run_id = r.run_id
+    WHERE r.run_id = (SELECT max(run_id) FROM runs WHERE source = 'mapbox')
+)
+SELECT e.name, e.highway, coalesce(l.congestion, 'no data') AS congestion
+FROM driving.edges e
+LEFT JOIN latest_mapbox l ON e.edge_id = l.edge_id
+WHERE e.name IS NOT NULL LIMIT 10;
 ```
 
 ---
@@ -193,86 +195,71 @@ Useful for debugging or accessing tags not carried into the routing schema.
 
 ## `main.runs` — pipeline execution log
 
-One row per traffic fetch execution (notebook 3 for Mapbox, notebook 3b for Google).
-The `run_id` links all historical tables.
+One row per traffic fetch execution (any source).
+The `run_id` links to the source-specific history table.
 
 | Column | Type | Description |
 |---|---|---|
 | `run_id` | INTEGER | Auto-incrementing run identifier |
 | `boundary_name` | VARCHAR | Name of the boundary (e.g. `sodermalm`) |
-| **`source`** | **VARCHAR** | **`'mapbox'` or `'google'`** |
+| `source` | VARCHAR | `'mapbox'`, `'google'`, or `'tomtom'` |
 | `zoom` | INTEGER | Tile zoom level used |
 | `fetched_at` | TIMESTAMP | UTC timestamp of the fetch |
 | `n_tiles` | INTEGER | Number of tiles downloaded |
 | `n_segments` | INTEGER | Number of traffic segments decoded |
 
-**Example query:**
-```sql
-SELECT run_id, fetched_at, n_segments FROM runs ORDER BY fetched_at;
-```
-
 ---
 
-## `main.traffic_segments` — raw Mapbox traffic data
-
-All Mapbox Traffic v1 segments decoded from tiles, preserved per run.
-Grows by ~100–200 rows with each run.
-
-| Column | Type | Description |
-|---|---|---|
-| `run_id` | INTEGER | Links to `runs.run_id` |
-| `segment_id` | INTEGER | Row index within the run |
-| `class` | VARCHAR | Mapbox road class (`street`, `motorway`, `primary`, …) |
-| `congestion` | VARCHAR | `low` / `moderate` / `heavy` / `severe` |
-| `tile` | VARCHAR | Source tile in `z/x/y` format |
-| `geometry` | GEOMETRY | LineString in WGS-84 |
-| `fetched_at` | TIMESTAMP | UTC timestamp (same as `runs.fetched_at`) |
-
-**Example query:**
-```sql
--- Traffic segments per run
-SELECT run_id, fetched_at, count(*) segments, congestion
-FROM traffic_segments t JOIN runs r USING (run_id)
-GROUP BY 1, 2, 4 ORDER BY 2;
-```
-
----
-
-## `main.edge_congestion_history` — congestion time series
-
-The main historical table. One row per matched edge per run, per source.
-Use this to answer: *"how did congestion on road X change over time, and does Mapbox agree with Google?"*
+## `main.mapbox_congestion_history` — Mapbox time series
 
 | Column | Type | Description |
 |---|---|---|
 | `run_id` | INTEGER | Links to `runs.run_id` |
 | `edge_id` | INTEGER | Links to `driving.edges.edge_id` |
-| **`source`** | **VARCHAR** | **`'mapbox'` or `'google'`** |
-| `congestion` | VARCHAR | Congestion value at this run |
-| `matched_at` | TIMESTAMP | UTC timestamp of the fetch/match |
+| `congestion` | VARCHAR | `low` / `moderate` / `heavy` / `severe` |
+| `matched_at` | TIMESTAMP | UTC timestamp |
+
+---
+
+## `main.google_congestion_history` — Google Maps time series
+
+Same schema as `mapbox_congestion_history`.
+
+---
+
+## `main.tomtom_congestion_history` — TomTom time series
+
+| Column | Type | Description |
+|---|---|---|
+| `run_id` | INTEGER | Links to `runs.run_id` |
+| `edge_id` | INTEGER | Links to `driving.edges.edge_id` |
+| `traffic_level` | DOUBLE | Raw TomTom relative flow (0.0 = blocked, 1.0 = free flow) |
+| `congestion` | VARCHAR | Classified from `traffic_level` |
+| `matched_at` | TIMESTAMP | UTC timestamp |
 
 **Example queries:**
 ```sql
--- Congestion history for a specific road
+-- Congestion history for a road (Mapbox)
 SELECT r.fetched_at, h.edge_id, e.name, h.congestion
-FROM edge_congestion_history h
+FROM mapbox_congestion_history h
 JOIN runs r          ON h.run_id  = r.run_id
 JOIN driving.edges e ON h.edge_id = e.edge_id
 WHERE e.name = 'Ringvägen'
 ORDER BY r.fetched_at;
 
--- How many edges changed congestion between two runs?
-SELECT a.edge_id, a.congestion AS before, b.congestion AS after
-FROM edge_congestion_history a
-JOIN edge_congestion_history b ON a.edge_id = b.edge_id
-WHERE a.run_id = 1 AND b.run_id = 2 AND a.congestion <> b.congestion;
+-- TomTom raw flow for heavy segments
+SELECT e.name, h.traffic_level, h.congestion
+FROM tomtom_congestion_history h
+JOIN driving.edges e ON h.edge_id = e.edge_id
+WHERE h.congestion IN ('heavy', 'severe')
+ORDER BY h.traffic_level;
 ```
 
 ---
 
 ## `main.boundary_cells` — H3 spatial index
 
-H3 hexagonal cells covering the boundary polygon (from notebook 5).
+H3 hexagonal cells covering the boundary polygon (from notebook 4).
 Resolution matches the `h3_resolution` setting in the duckOSM config YAML.
 
 | Column | Type | Description |
@@ -312,19 +299,20 @@ The boundary GeoJSON used to filter the network (from notebook 0).
 ## Entity relationships
 
 ```
-runs ──────────────────────────────────────────────────────────────────┐
-  │  run_id                                                            │
-  ├── traffic_segments.run_id                                          │
-  └── edge_congestion_history.run_id ── edge_id ── driving.edges       │
-                                                          │            │
-                               from_cell / to_cell ──────┘            │
-                                    │                                  │
-                             boundary_cells.h3_id                      │
-                                                                       │
-driving.edges.source / target ── driving.nodes.node_id                 │
-driving.edge_graph.from_edge / to_edge ── driving.edges.edge_id        │
-driving.turn_restrictions.from_edge_id / to_edge_id ── driving.edges   │
-driving.edges.osm_id ── driving.ways.osm_id ── raw.ways.osm_id ───────┘
+runs ─────────────────────────────────────────────────────────────────────┐
+  │  run_id                                                               │
+  ├── mapbox_congestion_history.run_id ── edge_id ── driving.edges        │
+  ├── google_congestion_history.run_id ── edge_id ── driving.edges        │
+  └── tomtom_congestion_history.run_id ── edge_id ── driving.edges        │
+                                                          │               │
+                               from_cell / to_cell ──────┘               │
+                                    │                                     │
+                             boundary_cells.h3_id                         │
+                                                                          │
+driving.edges.source / target ── driving.nodes.node_id                    │
+driving.edge_graph.from_edge / to_edge ── driving.edges.edge_id           │
+driving.turn_restrictions.from_edge_id / to_edge_id ── driving.edges      │
+driving.edges.osm_id ── driving.ways.osm_id ── raw.ways.osm_id ──────────┘
 ```
 
 ---

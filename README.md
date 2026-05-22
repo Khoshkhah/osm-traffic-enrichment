@@ -1,61 +1,42 @@
 # osm-traffic-enrichment
 
 An end-to-end pipeline that enriches an OSM road network with **real-time traffic congestion**
-from two independent sources — **Mapbox** and **Google Maps** — producing a routable **DuckDB**
-database where every edge has source-specific congestion columns.
-
-This project combines three tools:
-
-| Tool | Source | Role |
-|---|---|---|
-| **osmium-tool** | system package | Clips a large OSM PBF to your boundary |
-| **duckOSM** | [github.com/Khoshkhah/duckOSM](https://github.com/Khoshkhah/duckOSM) | Builds a routable DuckDB network from the PBF |
-| **Mapbox Traffic v1** | Mapbox API | Vector tile traffic data (requires Mapbox token) |
-| **Google Maps JS API** | Google Maps JavaScript API + Playwright | Renders a clean traffic-only map and matches pixels to road edges (requires Google Maps API key) |
+from three independent sources — **Mapbox**, **Google Maps**, and **TomTom** — producing a
+routable **DuckDB** database with per-source historical congestion tables.
 
 ---
 
 ## Traffic sources
 
-| Source | Method | Coverage | `no data` means |
+| Source | Method | Coverage | Raw value |
 |---|---|---|---|
-| **Mapbox** | Decodes road segments from MVT vector tiles, geometric map matching | High — free-flow roads get `low` | No sensor coverage |
-| **Google Maps** | Playwright renders a custom-styled map (white bg, white roads, TrafficLayer only), bearing-based pixel-to-edge matching | Partial — only congested roads colored | Road is flowing normally |
+| **Mapbox** | MVT vector tiles → geometric map match | Near 100% — free-flow roads get `low` | Pre-classified segment |
+| **Google Maps** | Playwright screenshot → CIE76 pixel classification → bearing-based match | Partial — only congested roads colored | 4-color pixel |
+| **TomTom** | PBF flow tiles → `traffic_level` classification → geometric match | Road network coverage | Float 0.0–1.0 (stored raw) |
 
-The Google Maps approach uses **playwright** to render a headless Google Maps page with all
-labels and map elements hidden — only traffic color stripes are visible. This eliminates
-false positives from road signs, text, and icons. Pixels are then matched to OSM edges
-using a **bearing-based algorithm** that rejects intersection zones geometrically.
-
-See **[docs/traffic_status.md](docs/traffic_status.md)** for the full explanation of congestion levels and how each source computes them.
+`no data` from Google means the road is flowing normally (Google does not color free-flow roads).
+TomTom raw `traffic_level` is stored in `tomtom_congestion_history` so thresholds can be re-applied without re-fetching.
 
 ---
 
-## Pipeline overview
+## Architecture
+
+Two separate pipelines with distinct responsibilities:
 
 ```
-boundary.geojson  +  region.osm.pbf
-           │
-           ▼
-  0️⃣  Get boundary          (Nominatim API / osm-boundaries.com / bounding box)
-           │
-  1️⃣  Filter PBF            (osmium extract → pbf/{name}.osm.pbf)
-           │
-  2️⃣  Build road network    (duckOSM → db/{name}.duckdb)
-           │
-           ├── 3️⃣  Mapbox: fetch MVT tiles → geometric map match → congestion_mapbox
-           │
-           └── 3️⃣  Google: Playwright screenshot → raster classify → bearing-based
-                             pixel-to-edge match → congestion_google
-           │
-           ▼
-  db/{name}.duckdb
-    driving.edges.congestion_mapbox    ← latest Mapbox congestion
-    driving.edges.congestion_google    ← latest Google congestion
-    edge_congestion_history            ← time-series per source
-  output/{name}_edges_traffic.geojson
-  output/{name}_edges_traffic_google.geojson
-  logs/pipeline_{name}_{timestamp}.log
+pipeline_network.py          (run once per area)
+    │
+    ├── Fetch boundary       (Nominatim API or existing GeoJSON)
+    ├── Download country PBF (Geofabrik, cached)
+    ├── Filter PBF           (osmium extract → pbf/{name}.osm.pbf)
+    ├── Build network        (duckOSM → db/{name}.duckdb)
+    └── Generate H3 cells    (resolutions 6, 7, 8 → boundary_cells table)
+
+pipeline_traffic.py          (run regularly — hourly / daily)
+    │
+    ├── Mapbox  → fetch MVT tiles → map match → mapbox_congestion_history
+    ├── Google  → Playwright screenshot → pixel classify → google_congestion_history
+    └── TomTom  → fetch PBF tiles → traffic_level classify → tomtom_congestion_history
 ```
 
 ---
@@ -64,43 +45,56 @@ boundary.geojson  +  region.osm.pbf
 
 ```
 osm-traffic-enrichment/
-├── pipeline.py                      # CLI: all steps end-to-end
-├── traffic_db.py                    # Python library for querying the DuckDB output
-├── notebook/
-│   ├── 0_get_boundary.ipynb         # 5 methods to create a boundary GeoJSON
-│   ├── 1_filter_pbf.ipynb           # Download country PBF + osmium extract
-│   ├── 2_build_network.ipynb        # duckOSM → DuckDB + network stats
-│   ├── 3_fetch_traffic.ipynb        # Mapbox tiles → decode → spatial join
-│   ├── 3b_fetch_traffic_google.ipynb# Playwright render → raster → bearing match
-│   ├── 4_map_match.ipynb            # Geometric map matching → congestion_mapbox
-│   ├── 5_polygon_to_cells.ipynb     # Boundary → H3 hexagon cells
-│   └── 6_query_duckdb.ipynb         # Query helpers + Mapbox vs Google comparison
-├── docs/
-│   ├── pipeline_cli.md              # Full CLI argument reference
-│   ├── database_schema.md           # DuckDB table and column reference
-│   ├── traffic_status.md            # Congestion levels + how each source works
-│   └── traffic_db.md                # traffic_db.py library API reference
+├── pipeline_network.py              # Build network + H3 cells
+├── pipeline_traffic.py              # Fetch traffic from all sources
+├── pipeline.py                      # Combined wrapper (runs both)
+│
 ├── scripts/
+│   ├── traffic_db.py                # Python library for querying the DuckDB
+│   ├── mapbox_traffic.py            # MapboxTraffic: fetch tiles + map match
+│   ├── google_traffic.py            # GoogleTraffic: screenshot + pixel match
+│   ├── tomtom_traffic.py            # TomTomTraffic: fetch PBF + map match
+│   ├── pipeline_utils.py            # Shared logging, timing, config loading
 │   └── filter_pbf.py                # osmium extract wrapper
+│
 ├── config/
-│   ├── sodermalm.yaml               # duckOSM config (auto-generated by pipeline)
-│   └── nacka.yaml
-├── boundaries/
-│   ├── sodermalm.geojson            # Sample boundary (Södermalm, Stockholm)
-│   ├── nacka.geojson                # Sample boundary (Nacka, Stockholm)
-│   └── tartu.geojson                # Sample boundary (Tartu, Estonia)
-└── data/
-    └── sodermalm_edges.csv          # Sample output (inspect without a PBF)
+│   ├── network.template.yaml        # Template for network configs
+│   ├── traffic.template.yaml        # Template for traffic configs
+│   ├── sodermalm.yaml               # Network config — Södermalm, Stockholm
+│   ├── sodermalm_traffic.yaml       # Traffic config — Södermalm
+│   ├── tartu.yaml                   # Network config — Tartu, Estonia
+│   └── tartu_traffic.yaml           # Traffic config — Tartu
+│
+├── notebook/
+│   ├── 0_get_boundary.ipynb         # Create boundary GeoJSON
+│   ├── 1_filter_pbf.ipynb           # Download PBF + osmium extract
+│   ├── 2_build_network.ipynb        # duckOSM → DuckDB
+│   ├── 3a_fetch_traffic_mapbox.ipynb# Mapbox tiles → history table
+│   ├── 3b_fetch_traffic_google.ipynb# Playwright render → history table
+│   ├── 3c_fetch_traffic_tomtom.ipynb# TomTom PBF → history table
+│   ├── 4_polygon_to_cells.ipynb     # Boundary → H3 cells (multi-resolution)
+│   └── 5_query_duckdb.ipynb         # Queries + Folium visualizations
+│
+├── docs/
+│   ├── pipeline_cli.md              # CLI reference for both pipelines
+│   ├── database_schema.md           # DuckDB table and column reference
+│   ├── traffic_db.md                # scripts/traffic_db.py API reference
+│   └── traffic_status.md            # Congestion level definitions
+│
+└── boundaries/
+    ├── sodermalm.geojson
+    ├── nacka.geojson
+    └── tartu.geojson
 ```
 
 **Generated at runtime (git-ignored):**
 ```
-map/     ← country PBF files (large, shared across areas)
-pbf/     ← filtered regional PBF files
-db/      ← DuckDB databases
-tiles/   ← cached Mapbox .mvt tiles
-output/  ← GeoJSON + CSV exports  (also: *_rasters_z16/ per-area traffic rasters)
-logs/    ← timestamped run logs
+map/    ← country PBF files
+pbf/    ← filtered regional PBF files
+db/     ← DuckDB databases
+tiles/  ← cached Mapbox .mvt + TomTom .pbf tiles
+output/ ← GeoJSON + CSV exports
+logs/   ← timestamped run logs
 ```
 
 ---
@@ -113,9 +107,9 @@ logs/    ← timestamped run logs
 | **osmium-tool** | `sudo apt install osmium-tool` / `brew install osmium-tool` |
 | **duckOSM** | `pip install git+https://github.com/Khoshkhah/duckOSM.git` |
 | **playwright + chromium** | `pip install playwright && playwright install chromium` |
-| Mapbox token | [account.mapbox.com](https://account.mapbox.com/access-tokens/) — needed for `--traffic-source mapbox` |
-| Google Maps API key | [console.cloud.google.com](https://console.cloud.google.com/) — enable **Maps JavaScript API** — needed for `--traffic-source google` |
-| OSM PBF file | [download.geofabrik.de](https://download.geofabrik.de/) — downloaded automatically by `pipeline.py` |
+| Mapbox token | [account.mapbox.com](https://account.mapbox.com/access-tokens/) |
+| Google Maps JS API key | [console.cloud.google.com](https://console.cloud.google.com/) — enable **Maps JavaScript API** |
+| TomTom API key | [developer.tomtom.com](https://developer.tomtom.com/) — Traffic Flow Tile API |
 
 ---
 
@@ -126,132 +120,146 @@ git clone https://github.com/khoshkhah/osm-traffic-enrichment.git
 cd osm-traffic-enrichment
 
 pip install -r requirements.txt
-
-# Playwright headless browser (for Google Maps rendering)
 playwright install chromium
 
 cp .env.example .env
 # Edit .env:
-#   MAPBOX_ACCESS_TOKEN=pk.eyJ1...   (for Mapbox source)
-#   GOOGLE_MAPS_API_KEY=AIza...      (for Google source — Maps JavaScript API)
+#   MAPBOX_ACCESS_TOKEN=pk.eyJ1...
+#   GOOGLE_MAPS_API_KEY=AIza...
+#   TOMTOM_API_KEY=...
 ```
 
 ---
 
-## Quick start — CLI
+## Quick start
 
-**Both sources, everything auto-detected:**
+### Using a config file (recommended)
+
 ```bash
-python pipeline.py --place "Tartu, Estonia" --name tartu
+# 1. Build the network once
+python pipeline_network.py --config config/tartu.yaml
+
+# 2. Fetch traffic regularly
+python pipeline_traffic.py --config config/tartu_traffic.yaml
 ```
 
-**Reuse an existing PBF:**
+### Without a config file
+
 ```bash
-python pipeline.py \
-  --place "Södermalm, Stockholm, Sweden" \
-  --pbf   map/sweden-latest.osm.pbf \
-  --name  sodermalm
+# Auto-fetch boundary + detect country PBF, build all modes + H3 cells
+python pipeline_network.py --place "Tartu, Estonia" --name tartu
+
+# Fetch traffic for a specific DuckDB
+python pipeline_traffic.py --db db/tartu.duckdb --name tartu
 ```
 
-**Google only:**
+### Single source or forced refresh
+
 ```bash
-python pipeline.py --place "Tartu, Estonia" --name tartu --traffic-source google
+# Mapbox only
+python pipeline_traffic.py --config config/tartu_traffic.yaml --source mapbox
+
+# Force network rebuild
+python pipeline_network.py --config config/tartu.yaml --refresh
+
+# Force tile cache clear + re-fetch traffic
+python pipeline_traffic.py --config config/tartu_traffic.yaml --refresh
 ```
 
-**Force complete re-run:**
-```bash
-python pipeline.py --place "Tartu, Estonia" --name tartu --refresh
-```
-
-**Custom zoom levels (Mapbox and Google use different optimal zooms):**
-```bash
-# --zoom 14       → Mapbox tiles (default, sufficient)
-# --google-zoom 16 → Google screenshot (default, ~2.4 m/px)
-python pipeline.py --boundary boundaries/sodermalm.geojson \
-  --pbf map/sweden-latest.osm.pbf --name sodermalm \
-  --zoom 14 --google-zoom 16 --refresh
-```
-
-The pipeline is **resumable** — each step checks for its output and skips if already cached.  
 See **[docs/pipeline_cli.md](docs/pipeline_cli.md)** for the full argument reference.
 
 ---
 
-## Quick start — Notebooks
+## Config files
 
-```bash
-jupyter lab
+### Network config (`config/{name}.yaml`)
+
+Controls network building — copy `config/network.template.yaml` to get started.
+
+```yaml
+name: myarea
+boundary_path: boundaries/myarea.geojson
+country_url: https://download.geofabrik.de/europe/country-latest.osm.pbf
+refresh: false
+
+h3_resolutions: [6, 7, 8]   # h3_resolution for edge indexing = max(this list)
+
+output_path: db
+options:
+  build_graph: true
+  h3_indexing: true
+  simplify: true
+  process_speeds: true
+  extract_restrictions: true
+  calculate_costs: true
+modes:
+  - driving
+  - walking
+  - cycling
 ```
 
-| Notebook | Input | Output |
+### Traffic config (`config/{name}_traffic.yaml`)
+
+Controls traffic fetching — copy `config/traffic.template.yaml` to get started.
+The boundary polygon is read from the DuckDB `boundary` table — no path needed.
+
+```yaml
+name: myarea
+db_path: db/myarea.duckdb
+refresh: false
+
+traffic_sources: [mapbox, google, tomtom]
+mapbox_zoom: 14    # MVT tile zoom
+google_zoom: 16    # Playwright screenshot zoom (~2.4 m/px)
+tomtom_zoom: 14    # TomTom PBF tile zoom
+```
+
+---
+
+## Database schema
+
+Each source writes to its own history table. `driving.edges` contains pure OSM data — no traffic columns.
+
+| Table | Schema | Description |
 |---|---|---|
-| `0_get_boundary.ipynb` | place name / OSM admin file / coordinates | `boundaries/{name}.geojson` |
-| `1_filter_pbf.ipynb` | country PBF URL + boundary | `pbf/{name}.osm.pbf` + `config/{name}.yaml` |
-| `2_build_network.ipynb` | filtered PBF | `db/{name}.duckdb` |
-| `3_fetch_traffic.ipynb` | boundary + Mapbox token | `output/{name}_traffic.geojson` |
-| `3b_fetch_traffic_google.ipynb` | boundary + Google Maps API key | traffic raster + `congestion_google` in DuckDB |
-| `4_map_match.ipynb` | DuckDB + Mapbox traffic GeoJSON | `congestion_mapbox` in DuckDB |
-| `5_polygon_to_cells.ipynb` | boundary | H3 cells CSV + GeoJSON + DuckDB table |
-| `6_query_duckdb.ipynb` | DuckDB | Queries and visualizations via `traffic_db` library |
+| `edges` | `driving` / `walking` / `cycling` | Road segments — geometry, speed, cost, H3 index |
+| `runs` | `main` | One row per traffic fetch execution |
+| `mapbox_congestion_history` | `main` | Mapbox congestion per edge per run |
+| `google_congestion_history` | `main` | Google congestion per edge per run |
+| `tomtom_congestion_history` | `main` | TomTom congestion + raw `traffic_level` per edge per run |
+| `boundary_cells` | `main` | H3 hexagon grid at multiple resolutions |
+| `boundary` | `main` | Boundary polygon |
+
+**Congestion values:** `low` · `moderate` · `heavy` · `severe` · `no data`
+
+See **[docs/database_schema.md](docs/database_schema.md)** for the full column listing.
 
 ---
 
 ## `traffic_db` library
 
-`traffic_db.py` provides a clean Python API for querying the output DuckDB file.
-Import it from any notebook or script:
+`scripts/traffic_db.py` provides a clean Python API for querying the DuckDB:
 
 ```python
-from traffic_db import TrafficDB, CONGESTION_COLORS
+import sys; sys.path.insert(0, '..')
+from scripts.traffic_db import TrafficDB
 
-with TrafficDB('db/sodermalm.duckdb') as db:
-    edges   = db.get_edges(source='google', congestion='heavy')
+with TrafficDB('db/tartu.duckdb') as db:
+    # Latest congestion per source
+    edges   = db.get_edges(source='mapbox', congestion='heavy')
     summary = db.get_congestion_summary(source='google')
-    m       = db.plot_edges(edges)
-    db.plot_comparison()          # side-by-side Mapbox vs Google map
+
+    # Side-by-side map
+    db.plot_comparison(sources=['mapbox', 'google', 'tomtom'])
+
+    # History
+    db.get_congestion_history(road_name='Pikk', source='mapbox')
+
+    # All history runs
+    db.get_history_index()
 ```
 
 See **[docs/traffic_db.md](docs/traffic_db.md)** for the full API reference.
-
----
-
-## Output format
-
-### DuckDB (`db/{name}.duckdb`)
-
-`driving.edges` has **four congestion columns**, two per source:
-
-| Column | Type | Written by | Description |
-|---|---|---|---|
-| `congestion_mapbox` | VARCHAR | notebook 4 / pipeline | Latest Mapbox congestion level |
-| `congestion_mapbox_at` | TIMESTAMP | notebook 4 / pipeline | When Mapbox data was last fetched |
-| `congestion_google` | VARCHAR | notebook 3b / pipeline | Latest Google Maps congestion level |
-| `congestion_google_at` | TIMESTAMP | notebook 3b / pipeline | When Google data was last fetched |
-
-**Congestion values:** `low` · `moderate` · `heavy` · `severe` · `no data`
-
-Additional tables:
-
-| Table | Description |
-|---|---|
-| `runs` | One row per pipeline execution (source, zoom, timestamp, segment count) |
-| `edge_congestion_history` | Time-series: congestion per edge per run per source |
-| `boundary_cells` | H3 hexagon grid covering the boundary (notebook 5) |
-
-**Example queries:**
-```sql
--- Compare both sources for a specific road
-SELECT name, congestion_mapbox, congestion_google
-FROM driving.edges WHERE name = 'Ringvägen';
-
--- Congestion history by source
-SELECT r.fetched_at, r.source, h.congestion
-FROM edge_congestion_history h
-JOIN runs r ON h.run_id = r.run_id
-JOIN driving.edges e ON h.edge_id = e.edge_id
-WHERE e.name = 'Ringvägen'
-ORDER BY r.fetched_at;
-```
 
 ---
 
@@ -259,19 +267,19 @@ ORDER BY r.fetched_at;
 
 | File | Contents |
 |---|---|
-| [docs/pipeline_cli.md](docs/pipeline_cli.md) | Full CLI argument reference, usage patterns, caching table |
-| [docs/database_schema.md](docs/database_schema.md) | Every DuckDB table and column with example queries |
-| [docs/traffic_status.md](docs/traffic_status.md) | Congestion level definitions, how Mapbox and Google compute them |
-| [docs/traffic_db.md](docs/traffic_db.md) | `traffic_db.py` library API reference |
+| [docs/pipeline_cli.md](docs/pipeline_cli.md) | Full CLI reference for both pipelines |
+| [docs/database_schema.md](docs/database_schema.md) | DuckDB tables and columns |
+| [docs/traffic_db.md](docs/traffic_db.md) | `scripts/traffic_db.py` API |
+| [docs/traffic_status.md](docs/traffic_status.md) | Congestion level definitions |
 
 ---
 
 ## Related
 
-- [duckOSM](https://github.com/Khoshkhah/duckOSM) — standalone OSM → DuckDB network builder (step 2)
-- [Mapbox Traffic v1 tileset](https://docs.mapbox.com/data/tilesets/reference/mapbox-traffic-v1/)
-- [googletraffic R package](https://github.com/dime-worldbank/googletraffic) — inspiration for the Playwright rendering approach and reference colors
-- [osm-boundaries.com](https://osm-boundaries.com/map) — download admin boundaries by country/level
+- [duckOSM](https://github.com/Khoshkhah/duckOSM) — OSM → DuckDB network builder
+- [Mapbox Traffic v1](https://docs.mapbox.com/data/tilesets/reference/mapbox-traffic-v1/)
+- [TomTom Traffic Flow Tiles](https://developer.tomtom.com/traffic-api/documentation/traffic-flow/vector-flow-tiles)
+- [googletraffic R package](https://github.com/dime-worldbank/googletraffic) — inspiration for the Playwright approach and reference colors
 - [Geofabrik OSM extracts](https://download.geofabrik.de/)
 
 ---

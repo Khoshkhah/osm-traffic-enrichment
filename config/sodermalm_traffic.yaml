@@ -1,0 +1,15 @@
+# Traffic config for Södermalm, Stockholm
+# Usage: python pipeline_traffic.py --config config/sodermalm_traffic.yaml
+
+name: sodermalm
+db_path: db/sodermalm.duckdb
+refresh: false
+
+traffic_sources:
+  - mapbox
+  - google
+  - tomtom
+
+mapbox_zoom: 14
+google_zoom: 16
+tomtom_zoom: 14

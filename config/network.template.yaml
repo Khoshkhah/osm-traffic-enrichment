@@ -1,0 +1,52 @@
+# Network pipeline config template
+# Copy to config/{name}.yaml and fill in the values.
+#
+# Usage:
+#   python pipeline_network.py --config config/myarea.yaml
+#   python pipeline_network.py --config config/myarea.yaml --refresh
+#
+# Supported keys (CLI equivalent):
+#   name           (--name)          area name for output files
+#   place          (--place)         place name → auto-fetch boundary + detect country PBF
+#   boundary_path  (--boundary)      path to existing boundary GeoJSON
+#   country_url    (--country-url)   Geofabrik country PBF download URL
+#   country_pbf    (--pbf)           path to local country PBF (before filtering)
+#   refresh        (--refresh)       true = delete cached PBF + DuckDB before running
+#   h3_resolutions                   H3 resolutions for boundary_cells table
+#   output_path                      duckOSM output directory (default: db)
+#   options                          duckOSM build options
+#   modes                            routing modes
+
+name: myarea
+
+# Boundary — use place name (auto-detects country PBF) or an existing GeoJSON:
+# place: "My City, Country"
+boundary_path: boundaries/myarea.geojson
+
+# PBF source — use download URL or a local file:
+country_url: https://download.geofabrik.de/region/country-latest.osm.pbf
+# country_pbf: map/country-latest.osm.pbf
+
+refresh: false
+
+h3_resolutions:
+  - 6
+  - 7
+  - 8
+
+output_path: db
+
+options:
+  build_graph: true
+  h3_indexing: true
+  # h3_resolution is automatically set to max(h3_resolutions) — no need to set it here.
+  # Override only if you want a different resolution for edge indexing than the finest cell resolution.
+  simplify: true
+  process_speeds: true
+  extract_restrictions: true
+  calculate_costs: true
+
+modes:
+  - driving
+  - walking
+  - cycling

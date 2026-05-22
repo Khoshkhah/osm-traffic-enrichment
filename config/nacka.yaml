@@ -1,18 +1,25 @@
-name: "nacka"
-pbf_path: "/home/kaveh/projects/osm-traffic-enrichment/map/nacka.osm.pbf"
-output_path: "/home/kaveh/projects/osm-traffic-enrichment/db"
-# → Creates: /home/kaveh/projects/osm-traffic-enrichment/db/nacka.duckdb
+# Network config for Nacka, Stockholm
+# Usage: python pipeline_network.py --config config/nacka.yaml
 
-boundary_path: "/home/kaveh/projects/osm-traffic-enrichment/boundaries/nacka.geojson"
+name: nacka
+boundary_path: boundaries/nacka.geojson
+country_pbf: map/sweden-latest.osm.pbf
+refresh: false
+
+h3_resolutions:
+  - 6
+  - 7
+  - 8
+
+output_path: db
 
 options:
-  build_graph: true          # edge adjacency table for routing
-  h3_indexing: true          # H3 spatial index on edges
-  h3_resolution: 8            # H3 resolution (0-15) — match notebook 5
-  simplify: true             # contract degree-2 nodes (smaller DB, faster routing)
-  process_speeds: true       # normalise speed limits
-  extract_restrictions: true # extract turn restrictions
-  calculate_costs: true      # calculate travel time in seconds
+  build_graph: true
+  h3_indexing: true
+  simplify: true
+  process_speeds: true
+  extract_restrictions: true
+  calculate_costs: true
 
 modes:
   - driving

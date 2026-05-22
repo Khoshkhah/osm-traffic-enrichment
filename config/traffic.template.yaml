@@ -1,0 +1,32 @@
+# Traffic pipeline config template
+# Copy to config/{name}_traffic.yaml and fill in the values.
+#
+# Usage:
+#   python pipeline_traffic.py --config config/myarea_traffic.yaml
+#   python pipeline_traffic.py --config config/myarea_traffic.yaml --source mapbox
+#
+# The boundary polygon is read from the DuckDB boundary table — no boundary_path needed.
+# Required API keys go in .env (not here):
+#   MAPBOX_ACCESS_TOKEN, GOOGLE_MAPS_API_KEY, TOMTOM_API_KEY
+#
+# Supported keys (CLI equivalent):
+#   name           (--name)          area name for logs and tile cache dirs
+#   db_path        (--db)            path to DuckDB built by pipeline_network.py
+#   traffic_sources                  list of sources to run  (--source all)
+#   mapbox_zoom    (--mapbox-zoom)   Mapbox MVT tile zoom
+#   google_zoom    (--google-zoom)   Google Maps screenshot zoom
+#   tomtom_zoom    (--tomtom-zoom)   TomTom PBF tile zoom
+#   refresh        (--refresh)       true = delete cached tile files before running
+
+name: myarea
+db_path: db/myarea.duckdb
+refresh: false
+
+traffic_sources:
+  - mapbox
+  - google
+  - tomtom
+
+mapbox_zoom: 14    # 14 ≈ 9.5 m/tile — good for city scale
+google_zoom: 16    # 16 ≈ 2.4 m/px  — auto-reduced if screenshot too large
+tomtom_zoom: 14

@@ -1,229 +1,209 @@
 # Traffic Status Values
 
-This document explains the four congestion levels used in the pipeline,
-what they mean in practice, and exactly how each data source (Mapbox and Google Maps)
-derives them — the methods are fundamentally different.
+This document explains the four congestion levels, what they mean in practice, and
+how each data source derives them — the methods are fundamentally different.
 
 ---
 
 ## Congestion levels
 
-Both Mapbox and Google Maps use the same four-level scale, stored in
-`congestion_mapbox` and `congestion_google` columns of `driving.edges`.
+All three sources use the same four-level scale, stored in per-source history tables
+(`mapbox_congestion_history`, `google_congestion_history`, `tomtom_congestion_history`).
 
 | Value | Color | Typical speed | Meaning |
 |---|---|---|---|
-| `low` | 🟢 Green | Near free-flow speed | Traffic moving normally. No significant delay. |
-| `moderate` | 🟠 Orange | 60–80% of free-flow speed | Noticeable slowdown. Travel time slightly increased. |
-| `heavy` | 🔴 Red | 40–60% of free-flow speed | Significant congestion. Expect delays. |
-| `severe` | ⬛ Dark red | < 40% of free-flow speed | Near standstill. Major incident or rush hour peak. |
-| `no data` | ⬜ Gray | Unknown | No sensor coverage, or road is not monitored. |
+| `low` | 🟢 Green | Near free-flow | Traffic moving normally. No significant delay. |
+| `moderate` | 🟠 Yellow | 60–85% of free-flow | Noticeable slowdown. Travel time slightly increased. |
+| `heavy` | 🔴 Red | 40–60% of free-flow | Significant congestion. Expect delays. |
+| `severe` | ⬛ Dark red | < 40% of free-flow | Near standstill or road closure. |
+| `no data` | ⬜ Gray | Unknown | Road not monitored, or flowing normally (Google only). |
 
-**Free-flow speed** is the expected speed under ideal conditions with no congestion
-(usually close to the speed limit). Congestion is measured as the ratio of the
-current observed speed to this baseline.
+**Free-flow speed** is the expected speed under ideal conditions (usually close to the speed limit).
 
 ---
 
-## How Mapbox computes congestion
+## Mapbox
 
-### Data source
-Mapbox Traffic v1 tileset (`mapbox.mapbox-traffic-v1`) — served as
-Mapbox Vector Tiles (`.mvt` / `.pbf` binary format).
+**Source:** Traffic v1 tileset (`mapbox.mapbox-traffic-v1`) — MVT vector tiles.
 
 ### How Mapbox collects data
-Mapbox aggregates **anonymous GPS probe data** from millions of mobile devices
-and vehicles in real time. Each probe is a timestamped GPS location with speed.
-Mapbox processes these probes to estimate the current speed on every road segment
-in its network.
+Anonymous GPS probe data from millions of mobile devices. Each probe is a timestamped
+location + speed. Mapbox estimates current speed on every road segment in real time.
 
-### How congestion is computed (Mapbox internal algorithm)
-1. **Baseline speed** — Mapbox maintains a historical baseline speed for each
-   road segment at each time of day and day of week. This represents normal free-flow speed.
-2. **Current speed** — Computed from recent GPS probes on the segment.
-3. **Speed ratio** — `current_speed / baseline_speed`
-4. **Classification:**
+### Classification
+Mapbox compares current speed against a historical baseline for the same road/time:
 
-| Speed ratio | Congestion level |
+| Speed ratio (current / free-flow) | Level |
 |---|---|
 | > 0.85 | `low` |
 | 0.60 – 0.85 | `moderate` |
 | 0.40 – 0.60 | `heavy` |
 | < 0.40 | `severe` |
 
-The exact thresholds are Mapbox's proprietary algorithm and may vary by road type,
-region, and time of day. The ratios above are approximate.
+The congestion level is a **text property** already embedded in the tile feature —
+no color analysis needed.
 
-### How the pipeline reads it
-The congestion level is already a **text property** (`congestion: "low"`) embedded
-directly in the MVT tile features — no color analysis or computation needed on our side.
-
+### Pipeline steps
 ```
-Pipeline steps for Mapbox:
-  1. Download mapbox.mapbox-traffic-v1 tiles (binary .mvt)    [notebook 3]
-  2. Decode with mapbox_vector_tile library
-  3. Each decoded feature already has: {class, congestion}
-     e.g. congestion = "low"
-  4. Spatial join to Mapbox streets-v8 tile (road geometry)
-  5. Geometric map matching to OSM edges                       [notebook 4]
-     - 25 m corridor buffer
-     - 45° direction filter (rejects parallel/opposite roads)
-     - 40% overlap threshold
-  6. Write to driving.edges.congestion_mapbox
+1. Download traffic-v1 + streets-v8 MVT tiles        scripts/mapbox_traffic.py
+2. Decode tile features — each has {congestion: "low"|...}
+3. Spatial join streets + traffic (sjoin_nearest, max 20 m)
+4. Geometric map match to OSM edges:
+   - 25 m corridor buffer
+   - ≤ 45° bearing filter
+   - ≥ 40% overlap threshold
+   - Most severe congestion wins
+5. Write to mapbox_congestion_history
 ```
 
-**Coverage:** Mapbox assigns a level to every road it has sensor data for.
-A free-flowing road gets `low`, NOT `no data`.
-`no data` only appears for roads Mapbox has no GPS probe coverage for at all.
+**Coverage:** Nearly 100% — free-flowing roads get `low`, not `no data`.
+`no data` only means the road has no GPS probe coverage at all.
 
 ---
 
-## How Google Maps computes congestion
+## Google Maps
 
-### Data source
-Google Maps JavaScript API (`TrafficLayer`) rendered by a headless Chromium browser
-via **Playwright** — the same approach used by the
-[googletraffic R package](https://github.com/dime-worldbank/googletraffic).
+**Source:** Google Maps JavaScript API `TrafficLayer` rendered by Playwright.
 
 ### How Google collects data
-Google aggregates GPS data from Android devices (with user consent), Waze community
-reports, and road sensors to estimate real-time speeds across its road network.
-The methodology is similar to Mapbox: compare current speed against a historical baseline
-for the same road at the same time of day.
+GPS from Android devices, Waze reports, and road sensors. Same baseline-vs-current
+approach as Mapbox.
 
-### How congestion is encoded
-Unlike Mapbox (which uses text properties in a vector format), Google's `TrafficLayer`
-renders congestion as **pixel color** painted on road lines. Each congested segment
-is drawn in one of four colors; non-congested roads stay white (in our custom rendering).
+### Classification
+Google renders congestion as **pixel colors** painted on road lines. The pipeline
+classifies pixels by CIE76 distance to four reference colors:
 
-### How the pipeline reads it — Playwright rendering + bearing-based matching
-
-**Step 1 — Render a clean screenshot**
-
-Instead of fetching CDN tiles (which contain road labels, icons, and signs), the pipeline
-renders a custom Google Maps HTML page in a headless browser with:
-- All labels → `visibility: off`
-- All geometry → `visibility: off` (buildings, water, etc.)
-- Roads → `visibility: on`, color `#ffffff` (white)
-- Background → `#ffffff` (white)
-- `TrafficLayer` added on top
-
-The result is a clean PNG where **only traffic color stripes are visible**.
-No false positives from map text, signs, or icons.
-
-**Step 2 — Classify pixels (LAB color distance)**
-
-The pipeline classifies each non-white pixel by computing its
-**CIE76 distance in LAB color space** to four reference colors taken from the
-`googletraffic` R package — the exact colors the Google Maps JS API renders:
-
-| Congestion | Hex | RGB |
+| Level | Hex | RGB |
 |---|---|---|
-| `low` | `#11D68F` | (17, 214, 143) — teal-green |
-| `moderate` | `#FFCF43` | (255, 207, 67) — yellow |
-| `heavy` | `#F24E42` | (242, 78, 66) — red |
-| `severe` | `#A92727` | (169, 39, 39) — dark red |
+| `low` | `#11D68F` | (17, 214, 143) teal-green |
+| `moderate` | `#FFCF43` | (255, 207, 67) yellow |
+| `heavy` | `#F24E42` | (242, 78, 66) red |
+| `severe` | `#A92727` | (169, 39, 39) dark red |
 
-A pixel is assigned to the nearest reference if the CIE76 distance is ≤ 25 units;
-otherwise it remains `no data`. LAB is perceptually uniform — equal distance means
-equal visual difference, making the threshold robust to JPEG/PNG compression artifacts.
+A pixel is assigned if CIE76 distance ≤ 25 units; otherwise it remains `no data`.
 
-**Step 3 — Bearing-based pixel-to-edge matching**
-
-Traffic stripes always run *along* roads. The pipeline exploits this to resolve
-intersection ambiguity:
-
-1. Extract all classified traffic pixels as EPSG:3857 coordinates
-2. For each pixel:
-   - Estimate the local **stripe direction** (PCA on neighboring traffic pixels within 25 m)
-   - Find candidate edge sample points within **10 m**
-   - Keep only candidates whose local bearing is within **40°** of the stripe bearing
-   - If only one OSM way (`osm_id`) remains after the bearing filter → assign to nearest edge
-   - If multiple ways remain (true intersection) → **discard** the pixel
-3. Aggregate: each edge takes the most severe level among its assigned pixels
-
-This avoids the intersection problem: pixels at road crossings are naturally discarded
-because two perpendicular roads cannot both match the stripe bearing.
-
+### Pipeline steps
 ```
-Pipeline steps for Google Maps:
-  1. Render custom-styled Google Maps HTML in Playwright  [notebook 3b / pipeline]
-     — white bg, white roads, TrafficLayer only, no labels/icons
-  2. Build traffic raster: classify every pixel with CIE76 LAB distance
-     — produces a uint8 array (0=none, 1=low, 2=moderate, 3=heavy, 4=severe)
-  3. For each traffic pixel:
-     a. Estimate local stripe direction from neighboring traffic pixels (PCA)
-     b. Find candidate edges within 10 m
-     c. Filter by bearing alignment (max 40° difference)
-     d. Require single osm_id among filtered candidates (discard intersections)
-     e. Assign to nearest edge
-  4. Aggregate by edge: most severe level wins
-  5. Write to driving.edges.congestion_google + edge_congestion_history
+1. Render a custom Google Maps HTML page in headless Chromium    scripts/google_traffic.py
+   — white background, white roads, TrafficLayer only, no labels
+2. Classify every non-white pixel by CIE76 distance in LAB space
+   → uint8 raster (0=none, 1=low, 2=moderate, 3=heavy, 4=severe)
+3. Bearing-based pixel-to-edge matching:
+   a. Estimate local stripe direction (PCA on traffic pixels within 25 m)
+   b. Find candidate edge sample points within 10 m
+   c. Filter: stripe bearing vs edge bearing must differ by ≤ 40°
+   d. Require single OSM way (discard intersection pixels)
+   e. Assign to nearest edge
+4. Most severe pixel wins per edge
+5. Write to google_congestion_history
 ```
+
+**Coverage:** Partial — only congested roads are colored. `no data` usually means
+the road is flowing normally, not that it has no coverage.
 
 ---
 
-## Key differences between Mapbox and Google
+## TomTom
 
-| Aspect | Mapbox | Google Maps |
-|---|---|---|
-| Tile format | Vector (MVT binary) | Raster (PNG image) |
-| Congestion encoding | Text property on each road segment | Pixel color drawn on road lines |
-| How the pipeline reads it | Decode string property directly | Classify pixel color via HSV analysis |
-| Free-flowing roads | Always assigned `low` | Keep default gray → `no data` |
-| `no data` meaning | Road has **no GPS probe coverage** | Road is **flowing normally** OR has no coverage |
-| Map matching needed? | **Yes** — Mapbox segment IDs differ from OSM | **No** — sampled directly on OSM edge geometry |
-| Coverage | High — most sensor-covered roads get a value | Partial — only congested roads are colored |
-| Rush hour | More edges get non-`low` values | Many more colored pixels during peak hours |
+**Source:** TomTom Traffic Flow Tile API — PBF format, same z/x/y grid as Mapbox.
 
-> **Critical difference in `no data` interpretation:**
-> - Mapbox `no data` → this road has **no sensor coverage at all**
-> - Google `no data` → this road is most likely **flowing normally** (not colored)
->
-> When comparing the two sources, expect Google to show far more `no data`
-> edges even when traffic is light, while Mapbox will mark those same edges as `low`.
+### How TomTom collects data
+GPS probes from TomTom devices and mobile apps, combined with road sensor data.
 
----
+### Raw value: `traffic_level`
+TomTom provides a continuous float **`traffic_level`** (0.0 = blocked, 1.0 = free flow)
+representing the ratio of current speed to free-flow speed. This raw value is stored
+in `tomtom_congestion_history` alongside the classified level so thresholds can be
+adjusted without re-fetching.
 
-## Example SQL queries
+### Classification thresholds
 
+| Condition | Level |
+|---|---|
+| `road_closure = true` | `severe` |
+| `traffic_level < 0.40` | `severe` |
+| `0.40 ≤ traffic_level < 0.60` | `heavy` |
+| `0.60 ≤ traffic_level < 0.85` | `moderate` |
+| `traffic_level ≥ 0.85` | `low` |
+
+### Pipeline steps
+```
+1. Download Traffic Flow PBF tiles                              scripts/tomtom_traffic.py
+2. Decode "Traffic flow" layer — each feature has:
+   {traffic_level: float, road_closure: bool, road_type: str}
+3. Classify traffic_level → congestion level
+4. Geometric map match to OSM edges (same as Mapbox):
+   - 25 m corridor buffer, ≤ 45° bearing, ≥ 40% overlap
+   - Most severe congestion wins; winning segment's traffic_level is stored
+5. Write to tomtom_congestion_history (congestion + traffic_level columns)
+```
+
+**Re-classification without re-fetching:**
 ```sql
--- Current congestion from both sources for a specific road
-SELECT name, highway,
-       congestion_mapbox,    congestion_mapbox_at,
-       congestion_google,    congestion_google_at
-FROM driving.edges
-WHERE name = 'Ringvägen';
+-- Apply custom thresholds to stored traffic_level
+SELECT edge_id,
+       CASE WHEN traffic_level < 0.30 THEN 'severe'
+            WHEN traffic_level < 0.55 THEN 'heavy'
+            WHEN traffic_level < 0.80 THEN 'moderate'
+            ELSE 'low' END AS recls
+FROM tomtom_congestion_history
+WHERE run_id = (SELECT max(run_id) FROM runs WHERE source = 'tomtom');
+```
 
--- Roads where Mapbox shows congestion but Google shows no data
--- (likely flowing normally — Google simply does not color non-congested roads)
-SELECT edge_id, name, highway, congestion_mapbox, congestion_google
-FROM driving.edges
-WHERE congestion_mapbox IN ('moderate', 'heavy', 'severe')
-  AND congestion_google = 'no data';
+---
 
--- Roads where both sources agree on heavy or severe congestion
-SELECT edge_id, name, highway, congestion_mapbox, congestion_google
-FROM driving.edges
-WHERE congestion_mapbox IN ('heavy', 'severe')
-  AND congestion_google  IN ('heavy', 'severe');
+## Source comparison
 
--- History: how congestion changed on a road across all runs and sources
-SELECT r.fetched_at, r.source, h.congestion
-FROM edge_congestion_history h
-JOIN runs r          ON h.run_id  = r.run_id
-JOIN driving.edges e ON h.edge_id = e.edge_id
-WHERE e.name = 'Ringvägen'
-ORDER BY r.fetched_at, r.source;
+| Aspect | Mapbox | Google Maps | TomTom |
+|---|---|---|---|
+| Tile format | Vector MVT | PNG (screenshot) | Vector PBF |
+| Congestion encoding | Text property | Pixel color | Float ratio |
+| Free-flowing roads | Always `low` | `no data` (not colored) | `low` (≥ 0.85) |
+| `no data` meaning | No GPS coverage | Flowing normally OR no coverage | No coverage |
+| Raw value stored | — | — | `traffic_level` (0.0–1.0) |
+| Map matching | Geometric (25 m + bearing) | Bearing-based pixel match | Geometric (25 m + bearing) |
+| Typical coverage | ~98% of edges | ~5–15% of edges | ~60–80% of edges |
 
--- Match rate comparison: how many edges each source covers
-SELECT
-    sum(CASE WHEN congestion_mapbox != 'no data' THEN 1 ELSE 0 END) AS mapbox_covered,
-    sum(CASE WHEN congestion_google != 'no data' THEN 1 ELSE 0 END) AS google_covered,
-    count(*) AS total_edges,
-    round(sum(CASE WHEN congestion_mapbox != 'no data' THEN 1 ELSE 0 END) * 100.0 / count(*), 1)
-        AS mapbox_pct,
-    round(sum(CASE WHEN congestion_google != 'no data' THEN 1 ELSE 0 END) * 100.0 / count(*), 1)
-        AS google_pct
-FROM driving.edges;
+> **Critical difference:** Mapbox `low` and Google `no data` often describe the same
+> road — both mean normal traffic flow, expressed differently.
+> TomTom is the most direct: `traffic_level ≥ 0.85` → `low`, with the raw float available for custom analysis.
+
+---
+
+## Example queries via `traffic_db`
+
+```python
+from scripts.traffic_db import TrafficDB
+
+with TrafficDB('db/tartu.duckdb') as db:
+    # Summary per source
+    db.get_congestion_summary('mapbox')
+    db.get_congestion_summary('google')
+    db.get_congestion_summary('tomtom')
+
+    # Cross-source comparison
+    both = db.get_congestion_comparison(sources=['mapbox', 'google', 'tomtom'])
+
+    # History for one road
+    db.get_congestion_history(road_name='Pikk', source='mapbox')
+    db.get_congestion_history(road_name='Pikk', source='tomtom')  # includes traffic_level
+```
+
+**Raw SQL — re-classify TomTom with tighter thresholds:**
+```sql
+WITH latest AS (
+    SELECT h.edge_id, h.traffic_level,
+           CASE WHEN h.traffic_level < 0.30 THEN 'severe'
+                WHEN h.traffic_level < 0.55 THEN 'heavy'
+                WHEN h.traffic_level < 0.80 THEN 'moderate'
+                ELSE 'low' END AS recls
+    FROM tomtom_congestion_history h
+    JOIN runs r ON h.run_id = r.run_id
+    WHERE r.run_id = (SELECT max(run_id) FROM runs WHERE source = 'tomtom')
+)
+SELECT e.name, e.highway, l.traffic_level, l.recls
+FROM driving.edges e
+JOIN latest l ON e.edge_id = l.edge_id
+WHERE l.recls IN ('heavy', 'severe')
+ORDER BY l.traffic_level;
 ```
