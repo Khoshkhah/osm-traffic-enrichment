@@ -1,12 +1,16 @@
 """
 traffic_db — Python library for working with an osm-traffic-enrichment DuckDB file.
 
+Traffic congestion is stored exclusively in `edge_congestion_history` (never on
+`driving.edges`). All congestion reads join with the history table to find the
+latest run per source.
+
 Usage (read-only, context manager):
     from traffic_db import TrafficDB
 
     with TrafficDB('db/sodermalm.duckdb') as db:
-        edges = db.get_edges(source='google', congestion='heavy')
-        m     = db.plot_edges(edges)
+        edges   = db.get_edges(source='google', congestion='heavy')
+        m       = db.plot_edges(edges)
 
 Usage (write, e.g. from a notebook):
     with TrafficDB('db/sodermalm.duckdb', read_only=False) as db:
@@ -43,6 +47,9 @@ CONGESTION_ORDER: list[str] = ["low", "moderate", "heavy", "severe", "no data"]
 class TrafficDB:
     """
     Interface to an osm-traffic-enrichment DuckDB database.
+
+    Congestion data lives only in `edge_congestion_history` and `runs`.
+    The `driving.edges` table contains pure OSM network data.
 
     Parameters
     ----------
@@ -81,6 +88,30 @@ class TrafficDB:
         self._open()
         return self._con
 
+    # ── Internal helpers ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _latest_cte(source: str) -> str:
+        """CTE fragment that selects the latest congestion per edge for one source."""
+        return (
+            f"latest_{source} AS ("
+            f"  SELECT h.edge_id, h.congestion, r.fetched_at"
+            f"  FROM edge_congestion_history h"
+            f"  JOIN runs r ON h.run_id = r.run_id"
+            f"  WHERE r.source = '{source}'"
+            f"    AND r.run_id = (SELECT max(run_id) FROM runs WHERE source = '{source}')"
+            f")"
+        )
+
+    @staticmethod
+    def _to_gdf(df: pd.DataFrame, wkt_col: str = "wkt_geom",
+                crs: str = "EPSG:4326") -> gpd.GeoDataFrame:
+        return gpd.GeoDataFrame(
+            df.drop(columns=[wkt_col]),
+            geometry=gpd.GeoSeries.from_wkt(df[wkt_col]),
+            crs=crs,
+        )
+
     # ── Schema ────────────────────────────────────────────────────────────
 
     def list_tables(self) -> pd.DataFrame:
@@ -96,22 +127,12 @@ class TrafficDB:
 
     def migrate_schema(self) -> None:
         """
-        Ensure all required columns exist.
-        Safe to call repeatedly — uses ADD COLUMN IF NOT EXISTS.
+        Ensure runs and edge_congestion_history tables exist.
+        Does NOT add any columns to driving.edges (congestion lives in history only).
         Requires read_only=False.
         """
         if self.read_only:
             raise ValueError("migrate_schema requires read_only=False")
-        for col, dtype, default in [
-            ("congestion_mapbox",    "VARCHAR",   "'no data'"),
-            ("congestion_mapbox_at", "TIMESTAMP", "NULL"),
-            ("congestion_google",    "VARCHAR",   "'no data'"),
-            ("congestion_google_at", "TIMESTAMP", "NULL"),
-        ]:
-            self.con.execute(
-                f"ALTER TABLE driving.edges "
-                f"ADD COLUMN IF NOT EXISTS {col} {dtype} DEFAULT {default}"
-            )
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS runs (
                 run_id        INTEGER PRIMARY KEY,
@@ -135,15 +156,6 @@ class TrafficDB:
 
     # ── Edge queries ──────────────────────────────────────────────────────
 
-    @staticmethod
-    def _to_gdf(df: pd.DataFrame, wkt_col: str = "wkt_geom",
-                crs: str = "EPSG:4326") -> gpd.GeoDataFrame:
-        return gpd.GeoDataFrame(
-            df.drop(columns=[wkt_col]),
-            geometry=gpd.GeoSeries.from_wkt(df[wkt_col]),
-            crs=crs,
-        )
-
     def get_edges(
         self,
         mode:       str           = "driving",
@@ -154,36 +166,44 @@ class TrafficDB:
         limit:      Optional[int] = None,
     ) -> gpd.GeoDataFrame:
         """
-        Load road edges as a GeoDataFrame.
+        Load road edges as a GeoDataFrame, joining the latest congestion from history.
 
         Parameters
         ----------
         mode       : 'driving' | 'walking' | 'cycling'
-        source     : 'mapbox' | 'google'  — determines the `congestion` column
-        highway    : filter to a specific highway type, e.g. 'primary'
-        congestion : filter to a specific level, e.g. 'heavy'
+        source     : 'mapbox' | 'google' | any source — latest run is used
+        highway    : filter by highway type, e.g. 'primary'
+        congestion : filter by level, e.g. 'heavy'
         name       : partial road name search (case-insensitive)
         limit      : maximum rows to return
         """
-        col     = f"congestion_{source}"
-        filters = []
-        if highway:    filters.append(f"highway = '{highway}'")
-        if congestion: filters.append(f"{col} = '{congestion}'")
-        if name:       filters.append(f"lower(name) LIKE '%{name.lower()}%'")
-        where = ("WHERE " + " AND ".join(filters)) if filters else ""
-        lim   = f"LIMIT {limit}" if limit else ""
+        cte = self._latest_cte(source)
+        # Also include the other main source for side-by-side columns
+        other = "google" if source == "mapbox" else "mapbox"
+        cte_other = self._latest_cte(other)
+
+        cong_filter = f"AND coalesce(l.congestion, 'no data') = '{congestion}'" if congestion else ""
+        hw_filter   = f"AND e.highway = '{highway}'" if highway else ""
+        nm_filter   = f"AND lower(e.name) LIKE '%{name.lower()}%'" if name else ""
+        lim         = f"LIMIT {limit}" if limit else ""
 
         df = self.con.execute(f"""
-            SELECT edge_id, highway, name, oneway, length_m,
-                   maxspeed_kmh, cost_s, from_cell, to_cell,
-                   {col} AS congestion,
-                   congestion_mapbox, congestion_google,
-                   ST_AsText(geometry) AS wkt_geom
-            FROM {mode}.edges
-            {where}
-            ORDER BY edge_id
+            WITH {cte}, {cte_other}
+            SELECT e.edge_id, e.highway, e.name, e.oneway, e.length_m,
+                   e.maxspeed_kmh, e.cost_s, e.from_cell, e.to_cell,
+                   coalesce(l.congestion,       'no data') AS congestion,
+                   coalesce(l_{other}.congestion, 'no data') AS congestion_{other},
+                   l.fetched_at                            AS congestion_at,
+                   ST_AsText(e.geometry) AS wkt_geom
+            FROM {mode}.edges e
+            LEFT JOIN latest_{source} l       ON e.edge_id = l.edge_id
+            LEFT JOIN latest_{other}  l_{other} ON e.edge_id = l_{other}.edge_id
+            WHERE 1=1 {hw_filter} {nm_filter} {cong_filter}
+            ORDER BY e.edge_id
             {lim}
         """).df()
+        # Add a consistently-named source column for callers that check congestion_mapbox / congestion_google
+        df[f"congestion_{source}"] = df["congestion"]
         return self._to_gdf(df)
 
     def get_network_stats(self, mode: str = "driving") -> pd.DataFrame:
@@ -207,20 +227,22 @@ class TrafficDB:
         mode:     str   = "driving",
         source:   str   = "mapbox",
     ) -> gpd.GeoDataFrame:
-        """Edges within radius_m metres of (lon, lat)."""
-        col = f"congestion_{source}"
+        """Edges within radius_m metres of (lon, lat), with latest congestion from history."""
+        cte = self._latest_cte(source)
         df = self.con.execute(f"""
-            SELECT edge_id, name, highway,
-                   {col} AS congestion,
-                   length_m,
+            WITH {cte}
+            SELECT e.edge_id, e.name, e.highway,
+                   coalesce(l.congestion, 'no data') AS congestion,
+                   e.length_m,
                    round(ST_Distance(
-                       ST_Transform(geometry,          'EPSG:4326', 'EPSG:3857'),
+                       ST_Transform(e.geometry,       'EPSG:4326', 'EPSG:3857'),
                        ST_Transform(ST_Point({lon}, {lat}), 'EPSG:4326', 'EPSG:3857')
                    )) AS dist_m,
-                   ST_AsText(geometry) AS wkt_geom
-            FROM {mode}.edges
+                   ST_AsText(e.geometry) AS wkt_geom
+            FROM {mode}.edges e
+            LEFT JOIN latest_{source} l ON e.edge_id = l.edge_id
             WHERE ST_Distance(
-                ST_Transform(geometry,          'EPSG:4326', 'EPSG:3857'),
+                ST_Transform(e.geometry,       'EPSG:4326', 'EPSG:3857'),
                 ST_Transform(ST_Point({lon}, {lat}), 'EPSG:4326', 'EPSG:3857')
             ) <= {radius_m}
             ORDER BY dist_m
@@ -232,15 +254,17 @@ class TrafficDB:
     def get_congestion_summary(
         self, source: str = "mapbox", mode: str = "driving"
     ) -> pd.DataFrame:
-        """Edge count and km per congestion level for the chosen source."""
-        col = f"congestion_{source}"
+        """Edge count and km per congestion level for the chosen source (latest run)."""
+        cte = self._latest_cte(source)
         return self.con.execute(f"""
-            SELECT {col} AS congestion,
-                   count(*)                                          AS edges,
-                   round(sum(length_m)/1000, 1)                     AS km,
+            WITH {cte}
+            SELECT coalesce(l.congestion, 'no data')          AS congestion,
+                   count(*)                                    AS edges,
+                   round(sum(e.length_m)/1000, 1)             AS km,
                    round(count(*)*100.0 / sum(count(*)) OVER (), 1) AS pct
-            FROM {mode}.edges
-            GROUP BY {col}
+            FROM {mode}.edges e
+            LEFT JOIN latest_{source} l ON e.edge_id = l.edge_id
+            GROUP BY l.congestion
             ORDER BY km DESC
         """).df()
 
@@ -305,29 +329,34 @@ class TrafficDB:
 
     def get_congestion_comparison(self, mode: str = "driving") -> pd.DataFrame:
         """
-        All edges with both mapbox and google congestion columns plus a
-        human-readable agreement category.
+        All edges with the latest congestion from each source plus an agreement category.
+        Reads from edge_congestion_history (not from driving.edges columns).
         """
+        cte_mb = self._latest_cte("mapbox")
+        cte_gg = self._latest_cte("google")
         df = self.con.execute(f"""
-            SELECT edge_id, highway, name, length_m,
-                   congestion_mapbox, congestion_google,
-                   strftime(congestion_mapbox_at, '%Y-%m-%d %H:%M') AS mapbox_at,
-                   strftime(congestion_google_at, '%Y-%m-%d %H:%M') AS google_at,
-                   ST_AsText(geometry) AS wkt_geom
-            FROM {mode}.edges
+            WITH {cte_mb}, {cte_gg}
+            SELECT e.edge_id, e.highway, e.name, e.length_m,
+                   coalesce(lm.congestion, 'no data') AS congestion_mapbox,
+                   coalesce(lg.congestion, 'no data') AS congestion_google,
+                   strftime(lm.fetched_at, '%Y-%m-%d %H:%M') AS mapbox_at,
+                   strftime(lg.fetched_at, '%Y-%m-%d %H:%M') AS google_at,
+                   ST_AsText(e.geometry) AS wkt_geom
+            FROM {mode}.edges e
+            LEFT JOIN latest_mapbox lm ON e.edge_id = lm.edge_id
+            LEFT JOIN latest_google lg ON e.edge_id = lg.edge_id
         """).df()
 
         gdf = self._to_gdf(df)
 
-        # Derive agreement category
-        mb = gdf["congestion_mapbox"]
-        gg = gdf["congestion_google"]
+        mb  = gdf["congestion_mapbox"]
+        gg  = gdf["congestion_google"]
         cat = pd.Series("both no data", index=gdf.index)
         cat[(mb == "low")  & (gg == "no data")] = "Mapbox=low, Google=no data (normal flow)"
-        cat[(mb != "no data") & (gg != "no data") & (mb == gg)]  = "both agree (non-low)"
-        cat[(mb.isin(["moderate","heavy","severe"])) & (gg == "no data")] = "Mapbox congested, Google=no data"
-        cat[(mb != "no data") & (gg != "no data") & (mb != gg)]  = "sources disagree"
-        cat[(mb == "no data") & (gg != "no data")]                = "Google only"
+        cat[(mb != "no data") & (gg != "no data") & (mb == gg)]              = "both agree (non-low)"
+        cat[(mb.isin(["moderate","heavy","severe"])) & (gg == "no data")]    = "Mapbox congested, Google=no data"
+        cat[(mb != "no data") & (gg != "no data") & (mb != gg)]              = "sources disagree"
+        cat[(mb == "no data") & (gg != "no data")]                           = "Google only"
         gdf["agreement"] = cat
 
         return gdf
@@ -343,14 +372,15 @@ class TrafficDB:
         boundary_name:   str = "",
     ) -> int:
         """
-        Write congestion results to DuckDB (same logic as the pipeline).
+        Write congestion results to edge_congestion_history and runs.
+        Does NOT modify driving.edges.
 
         Parameters
         ----------
         edge_congestion : dict mapping edge_id (int) → level ('low'|'moderate'|'heavy'|'severe')
-        source          : 'google' or 'mapbox'
+        source          : 'google', 'mapbox', 'tomtom', or any string
         zoom            : zoom level used when fetching the data
-        n_segments      : total traffic pixels (Google) or traffic segments (Mapbox)
+        n_segments      : total traffic pixels (Google) or segments (Mapbox/TomTom)
         boundary_name   : area name stored in the runs table
 
         Returns
@@ -360,10 +390,7 @@ class TrafficDB:
         if self.read_only:
             raise ValueError("write_congestion requires read_only=False")
 
-        col_val    = f"congestion_{source}"
-        col_at     = f"congestion_{source}_at"
         fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-
         self.migrate_schema()
 
         run_id = self.con.execute(
@@ -376,11 +403,6 @@ class TrafficDB:
         )
 
         if edge_congestion:
-            self.con.executemany(
-                f"UPDATE driving.edges "
-                f"SET {col_val} = ?, {col_at} = ? WHERE edge_id = ?",
-                [(cong, fetched_at, int(eid)) for eid, cong in edge_congestion.items()],
-            )
             self.con.executemany(
                 "INSERT INTO edge_congestion_history VALUES (?, ?, ?, ?, ?)",
                 [
@@ -415,7 +437,6 @@ class TrafficDB:
             print("No line geometries to plot.")
             return None
 
-        # Drop datetime columns — folium cannot serialize them
         ts_cols = [c for c in lines.columns if pd.api.types.is_datetime64_any_dtype(lines[c])]
         lines   = lines.drop(columns=ts_cols, errors="ignore")
 
@@ -438,11 +459,7 @@ class TrafficDB:
     def plot_comparison(self, mode: str = "driving", zoom: int = 13) -> None:
         """
         Side-by-side Mapbox vs Google folium maps. Renders in Jupyter notebooks.
-
-        Parameters
-        ----------
-        mode : road network mode
-        zoom : initial map zoom level
+        Reads latest congestion from edge_congestion_history.
         """
         from html import escape
         from IPython.display import HTML, display

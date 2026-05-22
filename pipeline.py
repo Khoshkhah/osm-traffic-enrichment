@@ -574,23 +574,7 @@ def _all_matches(t_geom, osm_gdf, sindex, buf=25, dir_thresh=45, overlap_thresh=
 
 
 def _write_congestion_to_db(con, db_path, edges_df, edge_cong, source, name, zoom, n_segments, matched_at):
-    """Write congestion results to DuckDB: edges table, runs table, history table."""
-    col        = f"congestion_{source}"
-    col_at     = f"congestion_{source}_at"
-
-    # Ensure all four congestion columns exist
-    for c, default in [("congestion_mapbox","'no data'"), ("congestion_mapbox_at","NULL"),
-                        ("congestion_google","'no data'"), ("congestion_google_at","NULL")]:
-        dtype = "TIMESTAMP" if c.endswith("_at") else "VARCHAR"
-        con.execute(f"ALTER TABLE driving.edges ADD COLUMN IF NOT EXISTS {c} {dtype} DEFAULT {default}")
-
-    if edge_cong:
-        con.executemany(
-            f"UPDATE driving.edges SET {col} = ?, {col_at} = ? WHERE edge_id = ?",
-            [(cong, matched_at, eid) for eid, cong in edge_cong.items()]
-        )
-    log.info(f"  {col}: {len(edge_cong):,} edges updated")
-
+    """Write congestion to runs + edge_congestion_history only. driving.edges is not modified."""
     # runs table
     con.execute("""
         CREATE TABLE IF NOT EXISTS runs (
