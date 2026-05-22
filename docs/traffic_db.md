@@ -11,11 +11,20 @@ and provides Folium visualizations.
 ```python
 from traffic_db import TrafficDB
 
-# Read-only (default)
+# Read-only (default) — always returns latest run per source
 with TrafficDB('db/sodermalm.duckdb') as db:
+    # See what historical data is available
+    print(db.get_history_index())
+
+    # Latest data
     edges   = db.get_edges(source='google', congestion='heavy')
-    summary = db.get_congestion_summary(source='google')
+    summary = db.get_congestion_summary(source='mapbox')
     m       = db.plot_edges(edges)
+
+    # Specific historical snapshot by run_id
+    idx = db.get_history_index()
+    old_run = idx[idx['source'] == 'mapbox']['run_id'].iloc[-1]
+    edges_old = db.get_edges(source='mapbox', run_id=old_run)
 ```
 
 ```python
@@ -128,6 +137,23 @@ Creates if missing:
 
 ---
 
+## History queries
+
+### `get_history_index() → DataFrame`
+
+Returns all available historical snapshots — which sources have data, on what dates,
+and how many edges. Use the `run_id` column to query a specific snapshot.
+
+```python
+db.get_history_index()
+# run_id  source  boundary_name  zoom  fetched_at            edges_with_data  n_segments
+#      1  mapbox  sodermalm        14  2026-05-22 01:57:06             4465        3554
+#      2  google  sodermalm        16  2026-05-22 01:57:26              442      106405
+#      3  mapbox  sodermalm        14  2026-05-22 08:00:00             4431        3512
+```
+
+---
+
 ## Edge queries
 
 ### `get_edges(...) → GeoDataFrame`
@@ -135,11 +161,12 @@ Creates if missing:
 ```python
 get_edges(
     mode='driving',      # 'driving' | 'walking' | 'cycling'
-    source='mapbox',     # 'mapbox' | 'google' — determines the `congestion` column
+    source='mapbox',     # 'mapbox' | 'google' | any source in history
     highway=None,        # filter by highway type, e.g. 'primary'
     congestion=None,     # filter by level, e.g. 'heavy'
     name=None,           # partial road name search (case-insensitive)
     limit=None,          # max rows to return
+    run_id=None,         # specific run (None = latest run for source)
 )
 ```
 
@@ -190,9 +217,10 @@ nearby = db.get_nearby_edges(lon=18.065, lat=59.315, radius_m=300)
 
 ## Congestion queries
 
-### `get_congestion_summary(source='mapbox', mode='driving') → DataFrame`
+### `get_congestion_summary(source='mapbox', mode='driving', run_id=None) → DataFrame`
 
 Edge count, total km, and percentage per congestion level.
+Pass `run_id` to query a specific historical snapshot instead of the latest.
 
 ```python
 db.get_congestion_summary(source='google')
@@ -229,7 +257,7 @@ db.get_congestion_history(edge_id=175, source='mapbox')
 
 Returns: `run_id, fetched_at, source, edge_id, name, highway, congestion, matched_at`
 
-### `get_congestion_comparison(mode='driving') → GeoDataFrame`
+### `get_congestion_comparison(mode='driving', mapbox_run_id=None, google_run_id=None) → GeoDataFrame`
 
 All edges with both `congestion_mapbox` and `congestion_google` plus a human-readable
 `agreement` column.

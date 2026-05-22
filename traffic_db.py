@@ -91,15 +91,23 @@ class TrafficDB:
     # ── Internal helpers ──────────────────────────────────────────────────
 
     @staticmethod
-    def _latest_cte(source: str) -> str:
-        """CTE fragment that selects the latest congestion per edge for one source."""
+    def _latest_cte(source: str, run_id: Optional[int] = None) -> str:
+        """
+        CTE that selects congestion per edge for one source.
+
+        run_id=None  → latest run for that source
+        run_id=N     → specific historical run N
+        """
+        if run_id is not None:
+            run_filter = f"AND r.run_id = {run_id}"
+        else:
+            run_filter = f"AND r.run_id = (SELECT max(run_id) FROM runs WHERE source = '{source}')"
         return (
             f"latest_{source} AS ("
-            f"  SELECT h.edge_id, h.congestion, r.fetched_at"
+            f"  SELECT h.edge_id, h.congestion, r.fetched_at, r.run_id"
             f"  FROM edge_congestion_history h"
             f"  JOIN runs r ON h.run_id = r.run_id"
-            f"  WHERE r.source = '{source}'"
-            f"    AND r.run_id = (SELECT max(run_id) FROM runs WHERE source = '{source}')"
+            f"  WHERE r.source = '{source}' {run_filter}"
             f")"
         )
 
@@ -156,6 +164,30 @@ class TrafficDB:
 
     # ── Edge queries ──────────────────────────────────────────────────────
 
+    def get_history_index(self) -> pd.DataFrame:
+        """
+        Summary of all historical runs — which sources are available, on what dates,
+        and how many edges have data. Use run_id values to query a specific snapshot.
+
+        Returns
+        -------
+        DataFrame with columns:
+            run_id, source, boundary_name, zoom, fetched_at, edges_with_data, n_segments
+        """
+        return self.con.execute("""
+            SELECT r.run_id,
+                   r.source,
+                   r.boundary_name,
+                   r.zoom,
+                   r.fetched_at,
+                   count(h.edge_id) AS edges_with_data,
+                   r.n_segments
+            FROM runs r
+            LEFT JOIN edge_congestion_history h ON h.run_id = r.run_id
+            GROUP BY r.run_id, r.source, r.boundary_name, r.zoom, r.fetched_at, r.n_segments
+            ORDER BY r.fetched_at DESC, r.source
+        """).df()
+
     def get_edges(
         self,
         mode:       str           = "driving",
@@ -164,20 +196,22 @@ class TrafficDB:
         congestion: Optional[str] = None,
         name:       Optional[str] = None,
         limit:      Optional[int] = None,
+        run_id:     Optional[int] = None,
     ) -> gpd.GeoDataFrame:
         """
-        Load road edges as a GeoDataFrame, joining the latest congestion from history.
+        Load road edges as a GeoDataFrame, joining congestion from history.
 
         Parameters
         ----------
         mode       : 'driving' | 'walking' | 'cycling'
-        source     : 'mapbox' | 'google' | any source — latest run is used
+        source     : 'mapbox' | 'google' | any source
         highway    : filter by highway type, e.g. 'primary'
         congestion : filter by level, e.g. 'heavy'
         name       : partial road name search (case-insensitive)
         limit      : maximum rows to return
+        run_id     : specific historical run (None = latest run for source)
         """
-        cte = self._latest_cte(source)
+        cte = self._latest_cte(source, run_id)
         # Also include the other main source for side-by-side columns
         other = "google" if source == "mapbox" else "mapbox"
         cte_other = self._latest_cte(other)
@@ -223,12 +257,16 @@ class TrafficDB:
         self,
         lon:      float,
         lat:      float,
-        radius_m: float = 500,
-        mode:     str   = "driving",
-        source:   str   = "mapbox",
+        radius_m: float       = 500,
+        mode:     str         = "driving",
+        source:   str         = "mapbox",
+        run_id:   Optional[int] = None,
     ) -> gpd.GeoDataFrame:
-        """Edges within radius_m metres of (lon, lat), with latest congestion from history."""
-        cte = self._latest_cte(source)
+        """Edges within radius_m metres of (lon, lat), with congestion from history.
+
+        run_id=None uses the latest run; pass a specific run_id for a historical snapshot.
+        """
+        cte = self._latest_cte(source, run_id)
         df = self.con.execute(f"""
             WITH {cte}
             SELECT e.edge_id, e.name, e.highway,
@@ -252,10 +290,16 @@ class TrafficDB:
     # ── Congestion queries ────────────────────────────────────────────────
 
     def get_congestion_summary(
-        self, source: str = "mapbox", mode: str = "driving"
+        self,
+        source: str         = "mapbox",
+        mode:   str         = "driving",
+        run_id: Optional[int] = None,
     ) -> pd.DataFrame:
-        """Edge count and km per congestion level for the chosen source (latest run)."""
-        cte = self._latest_cte(source)
+        """Edge count and km per congestion level for the chosen source.
+
+        run_id=None uses the latest run; pass a specific run_id for a historical snapshot.
+        """
+        cte = self._latest_cte(source, run_id)
         return self.con.execute(f"""
             WITH {cte}
             SELECT coalesce(l.congestion, 'no data')          AS congestion,
@@ -327,13 +371,23 @@ class TrafficDB:
             LIMIT {limit}
         """).df()
 
-    def get_congestion_comparison(self, mode: str = "driving") -> pd.DataFrame:
+    def get_congestion_comparison(
+        self,
+        mode:           str         = "driving",
+        mapbox_run_id:  Optional[int] = None,
+        google_run_id:  Optional[int] = None,
+    ) -> pd.DataFrame:
         """
-        All edges with the latest congestion from each source plus an agreement category.
+        All edges with congestion from both sources plus an agreement category.
         Reads from edge_congestion_history (not from driving.edges columns).
+
+        Parameters
+        ----------
+        mapbox_run_id : specific Mapbox run (None = latest)
+        google_run_id : specific Google run (None = latest)
         """
-        cte_mb = self._latest_cte("mapbox")
-        cte_gg = self._latest_cte("google")
+        cte_mb = self._latest_cte("mapbox", mapbox_run_id)
+        cte_gg = self._latest_cte("google", google_run_id)
         df = self.con.execute(f"""
             WITH {cte_mb}, {cte_gg}
             SELECT e.edge_id, e.highway, e.name, e.length_m,
