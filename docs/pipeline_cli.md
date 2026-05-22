@@ -22,10 +22,13 @@ Required:
   --name NAME              Area name used for all output filenames
 
 Optional:
-  --zoom INT               Tile zoom level  [default: 16]
-                           Mapbox: 14 is sufficient. Google: 16 recommended (~2.4 m/px).
+  --zoom INT               Mapbox tile zoom level  [default: 14]
+                           Zoom 14 is sufficient for Mapbox — tiles cover ~2.4 km²
+                           each and already contain road-level segment data.
+  --google-zoom INT        Google Maps screenshot zoom level  [default: 16]
+                           Zoom 16 gives ~2.4 m/px so traffic stripes are 3-4 px wide.
                            For very large areas the pipeline auto-reduces zoom to stay
-                           within PIL's image-size limit (160 MP).
+                           within PIL's 160 MP image-size limit.
   --traffic-source SOURCE  mapbox | google | both  [default: both]
   --config FILE            duckOSM YAML config path
   --refresh                Delete cached files for this area before running

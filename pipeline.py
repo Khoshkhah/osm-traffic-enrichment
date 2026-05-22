@@ -31,10 +31,11 @@ ARGUMENT SUMMARY:
     --name         Output name used for all files  [required]
     --pbf          Path to a local .osm.pbf file  (optional if --place or --country-url given)
     --country-url  Geofabrik download URL  (optional if --place given)
-    --zoom             Mapbox tile zoom level, default 14
+    --zoom             Mapbox tile zoom level  [default: 14]
+    --google-zoom      Google Maps screenshot zoom level  [default: 16]
     --config           Path to a duckOSM YAML config (optional, auto-generated if absent)
     --refresh          Delete all area-specific cached files before running
-    --traffic-source   mapbox (default) | google
+    --traffic-source   mapbox | google | both (default)
 
   See docs/pipeline_cli.md for full argument documentation.
   See docs/traffic_status.md for congestion level definitions.
@@ -986,16 +987,20 @@ def main():
     bgroup.add_argument("--place",    help="Place name to fetch boundary automatically "
                                            "(e.g. 'Tartu, Estonia')")
     parser.add_argument("--name",     required=True, help="Area name (used for output filenames)")
-    parser.add_argument("--zoom",     type=int, default=16, help="Tile zoom level (default 16; zoom 16 recommended for Google traffic)")
+    parser.add_argument("--zoom",        type=int, default=14,
+                        help="Mapbox tile zoom level (default 14)")
+    parser.add_argument("--google-zoom", type=int, default=16,
+                        help="Google Maps screenshot zoom level (default 16, ~2.4 m/px). "
+                             "Auto-reduced if the resulting image exceeds 160 MP.")
     parser.add_argument("--config",   default=None, help="duckOSM YAML config (optional)")
     parser.add_argument("--refresh",  action="store_true",
                         help="Delete all cached files for this area before running. "
                              "The country PBF in map/ is kept.")
     parser.add_argument("--traffic-source", choices=["mapbox", "google", "both"],
                         default="both",
-                        help="Traffic data source: mapbox (default), google, or both. "
+                        help="Traffic data source: mapbox, google, or both (default). "
                              "mapbox requires MAPBOX_ACCESS_TOKEN in .env. "
-                             "google uses the public Google Maps CDN (no key needed). "
+                             "google requires GOOGLE_MAPS_API_KEY in .env. "
                              "both runs Mapbox then Google sequentially.")
     args = parser.parse_args()
 
@@ -1026,7 +1031,7 @@ def main():
     log.info(f"  OSM Traffic Enrichment Pipeline")
     log.info(f"{'='*60}")
     log.info(f"  Area      : {args.name}")
-    log.info(f"  Zoom      : {args.zoom}")
+    log.info(f"  Zoom      : {args.zoom}  (Mapbox)  |  {args.google_zoom}  (Google)")
     log.info(f"  Traffic   : {args.traffic_source}  "
              f"({'Mapbox + Google' if args.traffic_source == 'both' else args.traffic_source.title()})")
     log.info(f"  DuckDB    : {db_path}")
@@ -1096,7 +1101,7 @@ def main():
         if use_google:
             label = "[3/4]" if not use_mapbox else "[5/5]"
             with StepTimer(f"{label} Fetch & match Google → congestion_google"):
-                fetch_and_match_google(db_path, boundary, args.zoom,
+                fetch_and_match_google(db_path, boundary, args.google_zoom,
                                        args.name, output_dir)
 
     except Exception as e:

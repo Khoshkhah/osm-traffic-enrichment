@@ -163,10 +163,13 @@ python pipeline.py --place "Tartu, Estonia" --name tartu --traffic-source google
 python pipeline.py --place "Tartu, Estonia" --name tartu --refresh
 ```
 
-**Higher zoom for denser traffic data (recommended for Google):**
+**Custom zoom levels (Mapbox and Google use different optimal zooms):**
 ```bash
+# --zoom 14       → Mapbox tiles (default, sufficient)
+# --google-zoom 16 → Google screenshot (default, ~2.4 m/px)
 python pipeline.py --boundary boundaries/sodermalm.geojson \
-  --pbf map/sweden-latest.osm.pbf --name sodermalm --zoom 16 --refresh
+  --pbf map/sweden-latest.osm.pbf --name sodermalm \
+  --zoom 14 --google-zoom 16 --refresh
 ```
 
 The pipeline is **resumable** — each step checks for its output and skips if already cached.  
