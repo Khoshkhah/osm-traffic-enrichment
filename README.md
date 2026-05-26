@@ -49,6 +49,8 @@ osm-traffic-enrichment/
 ├── pipeline_traffic.py              # Fetch traffic from all sources (run regularly)
 │
 ├── scripts/
+│   ├── sensor_selector.py           # Interactive GIS dashboard HTTP server
+│   ├── sensor_selector.html         # Leaflet-based spatial selection interface
 │   ├── traffic_db.py                # Python library for querying the DuckDB
 │   ├── mapbox_traffic.py            # MapboxTraffic: fetch tiles + map match
 │   ├── google_traffic.py            # GoogleTraffic: screenshot + pixel match
@@ -197,6 +199,28 @@ python pipeline_network.py --config config/tartu.yaml --refresh
 # Force tile cache clear + re-fetch traffic
 python pipeline_traffic.py --config config/tartu_traffic.yaml --refresh
 ```
+
+---
+
+## Interactive Segment Selector Dashboard
+
+An interactive glassmorphic GIS dashboard is provided to visually select road segments, scrub through historical traffic patterns, overlay H3 hexagon grids, save custom sensor configurations with notes inside DuckDB, and export selections as standard CSV (with WKT geometries) or GeoJSON.
+
+### Launch the Dashboard
+
+Run the selector script from the project root. This starts a built-in server on port `8080` and automatically opens your browser:
+
+```bash
+python scripts/sensor_selector.py
+```
+
+### Key Features
+1. **Interactive Leaflet Map**: Built with a premium glassmorphic dark theme. You can click on any road segment to select/deselect it.
+2. **Road Styling Themes**: Toggle road layer colors by *OSM Road Category*, *Slate Gray*, *Bright White*, or direct *Mapbox / Google / TomTom Traffic Congestion* flows.
+3. **Historical Playback Dropdown**: When a traffic theme is selected, scrub through all timestamped historical snapshots captured in your database to visualize past congestion.
+4. **H3 Cell Index Grid**: View your boundary H3 cells layer with interactive opacity controls and resolution selectors.
+5. **Saved Selections Manager**: Input a selection name and a **custom note/explanation** (e.g. why/how these roads were chosen), save it directly inside DuckDB, overlay it back onto the map in neon-green, load it back to the active workspace, or delete it cleanly.
+6. **Robust Exporters**: Download active selections instantly as **GeoJSON** or **CSV** (featuring coordinates styled as standard Well-Known Text `"LINESTRING (...)"` strings for simple spreadsheet loading).
 
 See **[docs/pipeline_cli.md](docs/pipeline_cli.md)** for the full argument reference.
 

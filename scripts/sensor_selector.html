@@ -1,0 +1,1208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OSM Traffic Sensor Selector</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <!-- Google Fonts: Inter -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #0b0f19;
+      color: #f3f4f6;
+    }
+    /* Sleek scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+    /* Map Container */
+    #map {
+      height: 100%;
+      width: 100%;
+      background-color: #0b0f19;
+    }
+    /* Glassmorphism containers */
+    .glass-panel {
+      background: rgba(15, 23, 42, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }
+    /* Custom tooltip styling */
+    .leaflet-tooltip {
+      background: rgba(15, 23, 42, 0.9) !important;
+      border: 1px solid rgba(255, 255, 255, 0.15) !important;
+      color: #f3f4f6 !important;
+      border-radius: 6px !important;
+      padding: 6px 10px !important;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5) !important;
+      font-size: 12px !important;
+      font-weight: 500 !important;
+    }
+    /* Loader styles */
+    .spinner {
+      border: 3px solid rgba(255, 255, 255, 0.1);
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border-left-color: #3b82f6;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body class="overflow-hidden h-screen w-screen flex">
+
+  <!-- Left Sidebar (Control Panel) -->
+  <aside class="w-96 glass-panel h-screen z-[1000] flex flex-col relative transition-all duration-300">
+    <!-- Header -->
+    <div class="p-6 border-b border-gray-800">
+      <div class="flex items-center space-x-3 mb-2">
+        <div class="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
+        <h1 class="text-xl font-bold tracking-tight text-white">Sensor Selector</h1>
+      </div>
+      <p class="text-xs text-gray-400">Select road segments for traffic sensors</p>
+    </div>
+
+    <!-- Scrollable Control Panel Area -->
+    <div class="flex-1 overflow-y-auto p-6 space-y-6">
+      
+      <!-- Area/DB Selector -->
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Select Area (DuckDB)</label>
+        <select id="db-select" class="w-full bg-slate-900 border border-gray-800 text-gray-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+          <option value="" disabled selected>Loading databases...</option>
+        </select>
+      </div>
+
+      <!-- Road Styling Theme Selector -->
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Road Styling Theme</label>
+        <select id="theme-select" class="w-full bg-slate-900 border border-gray-800 text-gray-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+          <option value="color" selected>OSM Category (Color-Coded)</option>
+          <option value="gray">Monochrome Slate Gray</option>
+          <option value="white">Monochrome Bright White</option>
+          <option value="mapbox">Mapbox Congestion</option>
+          <option value="google">Google Maps Congestion</option>
+          <option value="tomtom">TomTom Congestion</option>
+        </select>
+      </div>
+
+      <!-- Historical Traffic Run Selector -->
+      <div id="traffic-run-container" class="hidden">
+        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Traffic History Run</label>
+        <select id="run-select" class="w-full bg-slate-900 border border-gray-800 text-gray-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+          <!-- Populated dynamically -->
+        </select>
+      </div>
+
+      <!-- Road Category Filters -->
+      <div>
+        <div class="flex justify-between items-center mb-3">
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Road Category Filters</label>
+          <button id="toggle-all-roads" class="text-xs text-blue-400 hover:text-blue-300 font-medium">Select None</button>
+        </div>
+        <div id="road-filters" class="space-y-2 max-h-48 overflow-y-auto p-2 bg-slate-950/50 rounded-lg border border-gray-900">
+          <!-- Populated dynamically -->
+          <p class="text-xs text-gray-500 italic p-1">Select a database to view classes...</p>
+        </div>
+      </div>
+
+      <!-- H3 Cell Layer Controls -->
+      <div>
+        <div class="flex justify-between items-center mb-2">
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">H3 Hexagon Grid</label>
+          <label class="relative inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="h3-toggle" class="sr-only peer" checked>
+            <div class="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-600"></div>
+          </label>
+        </div>
+        
+        <div class="space-y-3 bg-slate-950/50 p-3 rounded-lg border border-gray-900 text-sm">
+          <div class="flex justify-between text-xs text-gray-400">
+            <span>Opacity</span>
+            <span id="h3-opacity-val">40%</span>
+          </div>
+          <input type="range" id="h3-opacity" min="0" max="100" value="40" class="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500">
+          
+          <div class="flex justify-between items-center mt-2 pt-2 border-t border-gray-800">
+            <span class="text-xs text-gray-400">H3 Resolutions</span>
+            <div id="h3-res-toggles" class="flex space-x-1">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Active Selection List -->
+      <div>
+        <div class="flex justify-between items-center mb-2">
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Active Selections</label>
+          <span id="selected-count" class="px-2 py-0.5 text-xs font-bold bg-blue-900/50 border border-blue-800 text-blue-300 rounded-full">0 selected</span>
+        </div>
+        <div id="selected-list" class="space-y-2 max-h-52 overflow-y-auto p-2 bg-slate-950/50 rounded-lg border border-gray-900 text-xs">
+          <p class="text-gray-500 italic text-center py-4">Click segments on the map to select them</p>
+        </div>
+        <div class="mt-2 text-right text-xs text-gray-400">
+          Total Length: <span id="total-length" class="font-semibold text-white">0.0 km</span>
+        </div>
+      </div>
+
+      <hr class="border-gray-800/80 my-1">
+
+      <!-- Saved Selections Manager -->
+      <div class="space-y-4">
+        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Saved Selections</label>
+        
+        <!-- Save form -->
+        <div class="bg-slate-950/40 p-3 rounded-lg border border-gray-900 space-y-2.5">
+          <input type="text" id="save-name" placeholder="Selection Name..." class="w-full bg-slate-900 border border-gray-800 text-gray-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <textarea id="save-note" placeholder="Explanation Note (Why/How)..." rows="2" class="w-full bg-slate-900 border border-gray-800 text-gray-200 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"></textarea>
+          <button id="btn-save-selection" class="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:hover:bg-emerald-600 text-white py-1.5 px-3 rounded text-xs font-semibold transition duration-150 flex items-center justify-center space-x-1.5 shadow shadow-emerald-950" disabled>
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            <span>Save Active Selection</span>
+          </button>
+        </div>
+
+        <!-- Saved lists -->
+        <div id="saved-selections-list" class="space-y-2 max-h-48 overflow-y-auto p-2 bg-slate-950/50 rounded-lg border border-gray-900 text-xs">
+          <p class="text-gray-500 italic text-center py-2">No saved selections in DuckDB</p>
+        </div>
+
+        <!-- Selected set details box -->
+        <div id="saved-note-box" class="hidden bg-blue-950/20 border border-blue-900/50 rounded-lg p-3 text-xs space-y-1.5 backdrop-blur-sm animate-fadeIn">
+          <div class="flex items-center space-x-1.5 text-blue-400 font-semibold uppercase tracking-wider text-[10px]">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m11.25 11.25.041-.02a.75.75 0 1 1 1.083 1.083l-.04.02-.041.02a.75.75 0 0 0-.083.082l-.04.02m0 0a.75.75 0 0 1-1.083-1.083l.04-.02m0 0a.75.75 0 0 1 1.083 0l.04.02m-1.123.082L12 12" />
+            </svg>
+            <span>Set Explanation Note:</span>
+          </div>
+          <p id="saved-note-text" class="text-gray-300 italic pl-1 leading-relaxed">Explanation note goes here...</p>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Footer with Export Buttons -->
+    <div class="p-6 border-t border-gray-800 space-y-3 bg-slate-950/40">
+      <button id="export-geojson" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 px-4 rounded-lg font-medium text-sm transition duration-200 flex items-center justify-center space-x-2 shadow-lg shadow-blue-900/20 disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        </svg>
+        <span>Export Selected as GeoJSON</span>
+      </button>
+      <button id="export-csv" class="w-full bg-slate-800 hover:bg-slate-700 border border-gray-700 text-gray-200 py-2 px-4 rounded-lg font-medium text-xs transition duration-200 flex items-center justify-center space-x-2 disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+        </svg>
+        <span>Export Selected as CSV</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Main Map Container -->
+  <main class="flex-1 h-screen relative">
+    <div id="map"></div>
+    
+    <!-- Dynamic Loading Screen overlay -->
+    <div id="loading-overlay" class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm z-[9999] flex flex-col justify-center items-center space-y-4 transition-opacity duration-300">
+      <div class="spinner"></div>
+      <div class="text-center">
+        <h2 id="loading-title" class="text-lg font-bold text-white">Loading App</h2>
+        <p id="loading-msg" class="text-xs text-gray-400 mt-1">Connecting to Python backend...</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+  <script>
+    // App State
+    let map;
+    let selectedDb = '';
+    let roadsData = null;      // Full GeoJSON
+    let h3CellsData = null;    // Full GeoJSON
+    let boundaryData = null;   // Full GeoJSON
+    let roadsLayer = null;     // Leaflet GeoJSON layer
+    let h3Layer = null;        // Leaflet GeoJSON layer
+    let boundaryLayer = null;  // Leaflet GeoJSON layer
+    let selectedEdges = new Map(); // edge_id -> feature properties
+    let highwayCategories = new Set();
+    let enabledCategories = new Set();
+    let h3Resolutions = new Set();
+    let enabledH3Resolutions = new Set();
+    let baseRoadsTheme = 'color'; // 'color', 'gray', 'white'
+
+    // Historical Snapshots state
+    let allRuns = [];
+    let mapboxRunId = 'latest';
+    let googleRunId = 'latest';
+    let tomtomRunId = 'latest';
+
+    // Saved Selections state
+    let savedSelectionLayers = new Map(); // selection_id -> L.geoJSON layer
+
+    // Color definitions for road classes
+    const roadColors = {
+      'motorway': '#ff3b30',
+      'trunk': '#ff9500',
+      'primary': '#ffcc00',
+      'secondary': '#34c759',
+      'tertiary': '#5ac8fa',
+      'residential': '#af52de',
+      'service': '#8e8e93',
+      'default': '#555555'
+    };
+
+    // Color definitions for traffic congestion
+    const congestionColors = {
+      'low': '#10b981',       // Emerald Green
+      'moderate': '#eab308',  // Yellow
+      'heavy': '#f97316',     // Orange
+      'severe': '#ef4444',    // Red
+      'no data': '#4b5563'    // Dim slate gray
+    };
+
+    // Styling configurations
+    function getRoadStyle(feature, isSelected = false) {
+      if (isSelected) {
+        return {
+          color: '#00f0ff', // Vibrant high-contrast neon cyan-blue selection
+          weight: 6,
+          opacity: 1.0,
+          lineCap: 'round',
+          lineJoin: 'round'
+        };
+      }
+      
+      let baseColor;
+      const props = feature.properties;
+      
+      if (baseRoadsTheme === 'mapbox') {
+        const cong = props.mb_congestion || 'no data';
+        baseColor = congestionColors[cong] || congestionColors['no data'];
+      } else if (baseRoadsTheme === 'google') {
+        const cong = props.gg_congestion || 'no data';
+        baseColor = congestionColors[cong] || congestionColors['no data'];
+      } else if (baseRoadsTheme === 'tomtom') {
+        const cong = props.tt_congestion || 'no data';
+        baseColor = congestionColors[cong] || congestionColors['no data'];
+      } else if (baseRoadsTheme === 'gray') {
+        baseColor = '#3b4252'; // Subtle slate-gray
+      } else if (baseRoadsTheme === 'white') {
+        baseColor = '#e5e7eb'; // Clean light white
+      } else {
+        const highway = props.highway;
+        baseColor = roadColors[highway] || roadColors['default'];
+      }
+      
+      const highway = props.highway;
+      const isTrafficTheme = ['mapbox', 'google', 'tomtom'].includes(baseRoadsTheme);
+      
+      // Calculate opacity
+      let opacity = 0.7;
+      if (isTrafficTheme) {
+        const key = baseRoadsTheme === 'mapbox' ? 'mb_congestion' : (baseRoadsTheme === 'google' ? 'gg_congestion' : 'tt_congestion');
+        const cong = props[key] || 'no data';
+        opacity = cong === 'no data' ? 0.2 : 0.85; // Dim the "no data" roads to highlight active traffic flows
+      } else if (baseRoadsTheme === 'gray' || baseRoadsTheme === 'white') {
+        opacity = 0.45;
+      }
+
+      return {
+        color: baseColor,
+        weight: ['motorway', 'trunk', 'primary'].includes(highway) ? 3.5 : 2.0,
+        opacity: opacity,
+        lineCap: 'round',
+        lineJoin: 'round'
+      };
+    }
+
+    // Initialize Map
+    function initMap() {
+      map = L.map('map', {
+        zoomControl: false,
+        attributionControl: false
+      }).setView([59.35, 18.0], 13);
+
+      // Sleek Dark Matter tile layer
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 20
+      }).addTo(map);
+
+      // Re-position zoom controls beautifully in bottom-right
+      L.control.zoom({ position: 'bottomright' }).addTo(map);
+    }
+
+    // Load available databases on startup
+    async function loadDatabases() {
+      showLoading('Scanning Workspace', 'Finding DuckDB databases...');
+      try {
+        const res = await fetch('/api/databases');
+        const dbs = await res.json();
+        const select = document.getElementById('db-select');
+        select.innerHTML = '';
+        
+        if (dbs.length === 0) {
+          select.innerHTML = '<option value="" disabled>No databases found in db/</option>';
+          showLoading('No Data Found', 'Run pipeline_network.py first to create databases.', true);
+          return;
+        }
+
+        dbs.forEach(db => {
+          const opt = document.createElement('option');
+          opt.value = db;
+          opt.textContent = db;
+          select.appendChild(opt);
+        });
+
+        // Load the first database by default
+        selectedDb = dbs[0];
+        select.value = selectedDb;
+        await loadAreaData(selectedDb);
+      } catch (err) {
+        console.error(err);
+        showLoading('Error Occurred', 'Failed to fetch databases from backend.', true);
+      }
+    }
+
+    // Show/Hide loader overlay
+    function showLoading(title, msg, isError = false) {
+      const overlay = document.getElementById('loading-overlay');
+      document.getElementById('loading-title').textContent = title;
+      document.getElementById('loading-msg').textContent = msg;
+      const spinner = overlay.querySelector('.spinner');
+      
+      if (isError) {
+        spinner.classList.add('hidden');
+        document.getElementById('loading-title').classList.add('text-red-500');
+      } else {
+        spinner.classList.remove('hidden');
+        document.getElementById('loading-title').classList.remove('text-red-500');
+      }
+      overlay.classList.remove('opacity-0', 'pointer-events-none');
+    }
+
+    function hideLoading() {
+      const overlay = document.getElementById('loading-overlay');
+      overlay.classList.add('opacity-0', 'pointer-events-none');
+    }
+
+    // Load and render selected area data
+    async function loadAreaData(dbName) {
+      showLoading('Loading Data', `Querying network from ${dbName}.duckdb...`);
+      selectedEdges.clear();
+      updateSidebarSelections();
+
+      // Reset run selections for new database
+      mapboxRunId = 'latest';
+      googleRunId = 'latest';
+      tomtomRunId = 'latest';
+
+      // Clear existing saved selection layers from map
+      if (savedSelectionLayers) {
+        savedSelectionLayers.forEach((layer) => {
+          map.removeLayer(layer);
+        });
+        savedSelectionLayers.clear();
+      }
+      
+      // Hide selection description box
+      const noteBox = document.getElementById('saved-note-box');
+      if (noteBox) noteBox.classList.add('hidden');
+
+      try {
+        // 1. Fetch Roads
+        const roadsRes = await fetch(`/api/roads?db=${dbName}&mapbox_run=${mapboxRunId}&google_run=${googleRunId}&tomtom_run=${tomtomRunId}`);
+        roadsData = await roadsRes.json();
+
+        // 2. Fetch H3 Cells
+        const h3Res = await fetch(`/api/h3?db=${dbName}`);
+        h3CellsData = await h3Res.json();
+
+        // 3. Fetch Boundary
+        const boundaryRes = await fetch(`/api/boundary?db=${dbName}`);
+        boundaryData = await boundaryRes.json();
+
+        // 4. Fetch Historical Runs
+        try {
+          const runsRes = await fetch(`/api/runs?db=${dbName}`);
+          allRuns = await runsRes.json();
+        } catch (e) {
+          console.error("Failed to load historical runs:", e);
+          allRuns = [];
+        }
+
+        // Check if data is loaded
+        if (!roadsData || roadsData.features.length === 0) {
+          showLoading('Empty Database', 'No roads found in this database.', true);
+          return;
+        }
+
+        // Render everything
+        renderData();
+
+        // Update runs dropdown visibility/options
+        updateRunSelectorUI();
+
+        // Fetch and load selection sets from DB
+        await loadSavedSelections();
+
+        hideLoading();
+      } catch (err) {
+        console.error(err);
+        showLoading('Error Loading Data', `Failed to query tables in ${dbName}.`, true);
+      }
+    }
+
+    // Render layers to Leaflet map
+    function renderData() {
+      // Clear previous layers
+      if (roadsLayer) map.removeLayer(roadsLayer);
+      if (h3Layer) map.removeLayer(h3Layer);
+      if (boundaryLayer) map.removeLayer(boundaryLayer);
+
+      // Fit map boundary to network bounds or boundary bounds
+      if (boundaryData && boundaryData.features.length > 0) {
+        const tempLayer = L.geoJSON(boundaryData);
+        map.fitBounds(tempLayer.getBounds(), { padding: [40, 40] });
+      } else {
+        const tempLayer = L.geoJSON(roadsData);
+        map.fitBounds(tempLayer.getBounds(), { padding: [40, 40] });
+      }
+
+      // Generate road categories
+      highwayCategories.clear();
+      roadsData.features.forEach(f => {
+        if (f.properties.highway) highwayCategories.add(f.properties.highway);
+      });
+      enabledCategories = new Set(highwayCategories);
+      buildRoadCategoryFilters();
+
+      // Generate H3 resolutions
+      h3Resolutions.clear();
+      h3CellsData.features.forEach(f => {
+        if (f.properties.resolution !== undefined) h3Resolutions.add(f.properties.resolution);
+      });
+      // Sort resolutions
+      const sortedRes = Array.from(h3Resolutions).sort((a,b) => a-b);
+      enabledH3Resolutions = new Set(sortedRes);
+      buildH3ResolutionToggles(sortedRes);
+
+      // Render Boundary Layer
+      renderBoundaryLayer();
+
+      // Render H3 Cells Layer
+      renderH3Layer();
+
+      // Render Roads Layer
+      renderRoadsLayer();
+    }
+
+    // Render Outer Boundary Layer
+    function renderBoundaryLayer() {
+      if (boundaryLayer) map.removeLayer(boundaryLayer);
+      if (!boundaryData || boundaryData.features.length === 0) return;
+
+      boundaryLayer = L.geoJSON(boundaryData, {
+        style: function(f) {
+          return {
+            color: '#f97316', // Neon orange boundary line
+            weight: 2.5,
+            dashArray: '6, 8', // dashed pattern
+            fillColor: '#f97316',
+            fillOpacity: 0.03, // extremely subtle overlay tint
+            interactive: false
+          };
+        }
+      }).addTo(map);
+    }
+
+    // Render H3 Hexagons Layer
+    function renderH3Layer() {
+      if (h3Layer) map.removeLayer(h3Layer);
+      if (!document.getElementById('h3-toggle').checked) return;
+
+      const filteredFeatures = h3CellsData.features.filter(f => enabledH3Resolutions.has(f.properties.resolution));
+      const opacity = document.getElementById('h3-opacity').value / 100;
+
+      h3Layer = L.geoJSON({
+        type: "FeatureCollection",
+        features: filteredFeatures
+      }, {
+        style: function(f) {
+          return {
+            fillColor: '#ef4444', // red
+            fillOpacity: opacity * 0.4,
+            color: '#ef4444',
+            weight: 1,
+            opacity: opacity
+          };
+        },
+        interactive: false
+      }).addTo(map);
+    }
+
+    // Render Roads Layer
+    function renderRoadsLayer() {
+      if (roadsLayer) map.removeLayer(roadsLayer);
+
+      const filteredFeatures = roadsData.features.filter(f => enabledCategories.has(f.properties.highway));
+
+      roadsLayer = L.geoJSON({
+        type: "FeatureCollection",
+        features: filteredFeatures
+      }, {
+        style: function(f) {
+          return getRoadStyle(f, selectedEdges.has(f.properties.edge_id));
+        },
+        onEachFeature: function(feature, layer) {
+          // Bind tooltip (hover info)
+          const props = feature.properties;
+          layer.bindTooltip(`
+            <div>
+              <div class="font-bold">${props.name}</div>
+              <div class="text-gray-400 text-xs mt-0.5">${props.highway.toUpperCase()} &middot; ${props.length_m}m</div>
+            </div>
+          `, { sticky: true });
+
+          // Mouse Hover styling interactions
+          layer.on({
+            mouseover: function(e) {
+              const layer = e.target;
+              if (!selectedEdges.has(props.edge_id)) {
+                layer.setStyle({
+                  color: '#ffffff',
+                  weight: 4.5,
+                  opacity: 0.95
+                });
+                layer.bringToFront();
+              }
+            },
+            mouseout: function(e) {
+              const layer = e.target;
+              if (!selectedEdges.has(props.edge_id)) {
+                roadsLayer.resetStyle(layer);
+              }
+            },
+            click: function(e) {
+              // Click to select/deselect
+              const isSelected = selectedEdges.has(props.edge_id);
+              if (isSelected) {
+                selectedEdges.delete(props.edge_id);
+                roadsLayer.resetStyle(layer);
+              } else {
+                selectedEdges.set(props.edge_id, { ...props, geometry: feature.geometry });
+                layer.setStyle(getRoadStyle(feature, true));
+                layer.bringToFront();
+              }
+              updateSidebarSelections();
+            }
+          });
+        }
+      }).addTo(map);
+    }
+
+    // Build sidebar filter buttons for highway categories
+    function buildRoadCategoryFilters() {
+      const container = document.getElementById('road-filters');
+      container.innerHTML = '';
+      
+      const sortedCategories = Array.from(highwayCategories).sort();
+      sortedCategories.forEach(cat => {
+        const color = roadColors[cat] || roadColors['default'];
+        const div = document.createElement('div');
+        div.className = 'flex items-center justify-between text-xs p-1 hover:bg-slate-900 rounded';
+        div.innerHTML = `
+          <div class="flex items-center space-x-2">
+            <span class="w-2.5 h-2.5 rounded-full inline-block" style="background-color: ${color}"></span>
+            <span class="text-gray-300 font-medium capitalize">${cat.replace(/_/g, ' ')}</span>
+          </div>
+          <input type="checkbox" checked id="filter-${cat}" class="w-3.5 h-3.5 rounded bg-slate-900 border-gray-800 text-blue-500 focus:ring-blue-500 cursor-pointer">
+        `;
+        
+        div.querySelector('input').addEventListener('change', (e) => {
+          if (e.target.checked) enabledCategories.add(cat);
+          else enabledCategories.delete(cat);
+          renderRoadsLayer();
+        });
+
+        container.appendChild(div);
+      });
+      
+      // Update quick toggle button text
+      document.getElementById('toggle-all-roads').textContent = 'Select None';
+    }
+
+    // Build resolution selection buttons in H3 section
+    function buildH3ResolutionToggles(resolutions) {
+      const container = document.getElementById('h3-res-toggles');
+      container.innerHTML = '';
+
+      if (resolutions.length === 0) {
+        container.innerHTML = '<span class="text-xs text-gray-500 italic">None</span>';
+        return;
+      }
+
+      resolutions.forEach(res => {
+        const btn = document.createElement('button');
+        btn.className = 'px-2 py-1 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-500 transition duration-150';
+        btn.id = `h3-res-${res}`;
+        btn.textContent = `R${res}`;
+        
+        btn.addEventListener('click', () => {
+          if (enabledH3Resolutions.has(res)) {
+            if (enabledH3Resolutions.size === 1) return; // Must keep at least one
+            enabledH3Resolutions.delete(res);
+            btn.className = 'px-2 py-1 text-xs font-semibold rounded bg-slate-800 text-gray-400 hover:bg-slate-700 transition duration-150';
+          } else {
+            enabledH3Resolutions.add(res);
+            btn.className = 'px-2 py-1 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-500 transition duration-150';
+          }
+          renderH3Layer();
+        });
+
+        container.appendChild(btn);
+      });
+    }
+
+    // Update the Sidebar display showing active segment selections
+    function updateSidebarSelections() {
+      const list = document.getElementById('selected-list');
+      const countLabel = document.getElementById('selected-count');
+      const lengthLabel = document.getElementById('total-length');
+      const geoBtn = document.getElementById('export-geojson');
+      const csvBtn = document.getElementById('export-csv');
+      const saveBtn = document.getElementById('btn-save-selection');
+
+      if (selectedEdges.size === 0) {
+        list.innerHTML = '<p class="text-gray-500 italic text-center py-4">Click segments on the map to select them</p>';
+        countLabel.textContent = '0 selected';
+        countLabel.className = 'px-2 py-0.5 text-xs font-bold bg-slate-900/50 border border-slate-800 text-gray-400 rounded-full';
+        lengthLabel.textContent = '0.0 km';
+        geoBtn.disabled = true;
+        csvBtn.disabled = true;
+        if (saveBtn) saveBtn.disabled = true;
+        return;
+      }
+
+      // Enable export buttons
+      geoBtn.disabled = false;
+      csvBtn.disabled = false;
+      if (saveBtn) saveBtn.disabled = false;
+
+      // Update badge count
+      countLabel.textContent = `${selectedEdges.size} selected`;
+      countLabel.className = 'px-2 py-0.5 text-xs font-bold bg-blue-900/50 border border-blue-800 text-blue-300 rounded-full';
+
+      // Render selection list
+      list.innerHTML = '';
+      let totalLengthM = 0;
+
+      selectedEdges.forEach((props, edge_id) => {
+        totalLengthM += props.length_m;
+        
+        const color = roadColors[props.highway] || roadColors['default'];
+        const div = document.createElement('div');
+        div.className = 'flex items-center justify-between p-2 bg-slate-900/80 rounded border border-gray-800 hover:border-gray-700 transition';
+        div.innerHTML = `
+          <div class="flex flex-col pr-2 truncate">
+            <span class="font-semibold text-white truncate">${props.name}</span>
+            <div class="flex items-center space-x-1.5 mt-0.5 text-[10px] text-gray-400">
+              <span class="w-1.5 h-1.5 rounded-full inline-block" style="background-color: ${color}"></span>
+              <span class="capitalize">${props.highway}</span>
+              <span>&middot;</span>
+              <span>${props.length_m}m</span>
+            </div>
+          </div>
+          <button class="text-gray-400 hover:text-red-400 transition" onclick="removeSelection(${edge_id})">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-4 h-4">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        `;
+        list.appendChild(div);
+      });
+
+      // Update total length
+      lengthLabel.textContent = `${(totalLengthM / 1000).toFixed(2)} km`;
+    }
+
+    // Helper: Deselect edge by clicking sidebar clear button
+    window.removeSelection = function(edge_id) {
+      if (selectedEdges.has(edge_id)) {
+        selectedEdges.delete(edge_id);
+        updateSidebarSelections();
+        // Force roads layer repaint to reset style
+        renderRoadsLayer();
+      }
+    };
+
+    // Client-side GeoJSON exporter
+    function exportGeoJSON() {
+      if (selectedEdges.size === 0) return;
+
+      // Extract matching features
+      const selectedFeatures = roadsData.features.filter(f => selectedEdges.has(f.properties.edge_id));
+      const geojson = {
+        type: "FeatureCollection",
+        features: selectedFeatures
+      };
+
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(geojson, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `sensor_segments_${selectedDb.replace('.duckdb','')}.geojson`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+
+    // Convert GeoJSON geometry to WKT (Well-Known Text)
+    function geojsonToWkt(geometry) {
+      if (!geometry) return '""';
+      if (geometry.type === 'LineString') {
+        const coords = geometry.coordinates.map(c => `${c[0]} ${c[1]}`).join(', ');
+        return `"LINESTRING (${coords})"`;
+      } else if (geometry.type === 'MultiLineString') {
+        const lines = geometry.coordinates.map(line => {
+          const coords = line.map(c => `${c[0]} ${c[1]}`).join(', ');
+          return `(${coords})`;
+        }).join(', ');
+        return `"MULTILINESTRING (${lines})"`;
+      }
+      return '""';
+    }
+
+    // Client-side CSV exporter
+    function exportCSV() {
+      if (selectedEdges.size === 0) return;
+
+      const headers = ['edge_id', 'name', 'highway', 'length_m', 'wkt_geometry'];
+      const rows = [];
+      
+      selectedEdges.forEach(item => {
+        // Sanitize name fields (escape quotes for CSV)
+        const nameEscaped = item.name.replace(/"/g, '""');
+        const wkt = geojsonToWkt(item.geometry);
+        rows.push([
+          item.edge_id,
+          `"${nameEscaped}"`,
+          item.highway,
+          item.length_m,
+          wkt
+        ]);
+      });
+
+      const csvContent = "data:text/csv;charset=utf-8," 
+        + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+      
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", encodeURI(csvContent));
+      downloadAnchor.setAttribute("download", `sensor_segments_${selectedDb.replace('.duckdb','')}.csv`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+
+    // Connect event listeners
+    document.getElementById('db-select').addEventListener('change', (e) => {
+      selectedDb = e.target.value;
+      loadAreaData(selectedDb);
+    });
+
+    // Update Run Selector UI Dropdown
+    function updateRunSelectorUI() {
+      const container = document.getElementById('traffic-run-container');
+      const select = document.getElementById('run-select');
+      
+      const isTrafficTheme = ['mapbox', 'google', 'tomtom'].includes(baseRoadsTheme);
+      if (!isTrafficTheme) {
+        container.classList.add('hidden');
+        return;
+      }
+      
+      const sourceRuns = allRuns.filter(r => r.source === baseRoadsTheme);
+      if (sourceRuns.length === 0) {
+        container.classList.add('hidden');
+        return;
+      }
+      
+      container.classList.remove('hidden');
+      select.innerHTML = '';
+      
+      // Default: Latest Snapshot
+      const latestOpt = document.createElement('option');
+      latestOpt.value = 'latest';
+      latestOpt.textContent = 'Latest Snapshot';
+      select.appendChild(latestOpt);
+      
+      sourceRuns.forEach(run => {
+        const opt = document.createElement('option');
+        opt.value = run.run_id;
+        
+        let formattedTime = run.fetched_at;
+        try {
+          const date = new Date(run.fetched_at);
+          if (!isNaN(date.getTime())) {
+            formattedTime = date.toISOString().replace('T', ' ').substring(0, 16);
+          }
+        } catch (e) {}
+        
+        opt.textContent = `Run #${run.run_id} (${formattedTime})`;
+        select.appendChild(opt);
+      });
+      
+      const currentRunId = baseRoadsTheme === 'mapbox' ? mapboxRunId : 
+                           (baseRoadsTheme === 'google' ? googleRunId : tomtomRunId);
+      select.value = currentRunId;
+    }
+
+    // Theme Selector Handlers
+    document.getElementById('theme-select').addEventListener('change', (e) => {
+      baseRoadsTheme = e.target.value;
+      
+      // Update historical run selector dropdown options and visibility
+      updateRunSelectorUI();
+      
+      if (roadsLayer) {
+        roadsLayer.setStyle(function(f) {
+          return getRoadStyle(f, selectedEdges.has(f.properties.edge_id));
+        });
+      }
+    });
+
+    // Run selector change listener
+    document.getElementById('run-select').addEventListener('change', async (e) => {
+      const runVal = e.target.value;
+      if (baseRoadsTheme === 'mapbox') {
+        mapboxRunId = runVal;
+      } else if (baseRoadsTheme === 'google') {
+        googleRunId = runVal;
+      } else if (baseRoadsTheme === 'tomtom') {
+        tomtomRunId = runVal;
+      }
+      
+      showLoading('Updating Roads', `Fetching historical run data for ${baseRoadsTheme}...`);
+      try {
+        const roadsRes = await fetch(`/api/roads?db=${selectedDb}&mapbox_run=${mapboxRunId}&google_run=${googleRunId}&tomtom_run=${tomtomRunId}`);
+        roadsData = await roadsRes.json();
+        
+        // Re-render roads layer
+        renderRoadsLayer();
+        
+        // Keep active selection attributes updated
+        selectedEdges.forEach((val, key) => {
+          const match = roadsData.features.find(f => f.properties.edge_id === key);
+          if (match) {
+            selectedEdges.set(key, { ...match.properties, geometry: match.geometry });
+          }
+        });
+        updateSidebarSelections();
+        
+        hideLoading();
+      } catch (err) {
+        console.error(err);
+        showLoading('Error Loading Run', 'Failed to fetch historical run data.', true);
+      }
+    });
+    // Fetch and render saved selections
+    async function loadSavedSelections() {
+      const list = document.getElementById('saved-selections-list');
+      try {
+        const res = await fetch(`/api/selections?db=${selectedDb}`);
+        const selections = await res.json();
+        
+        list.innerHTML = '';
+        if (selections.length === 0) {
+          list.innerHTML = '<p class="text-gray-500 italic text-center py-2">No saved selections in DuckDB</p>';
+          document.getElementById('saved-note-box').classList.add('hidden');
+          return;
+        }
+        
+        selections.forEach(sel => {
+          const div = document.createElement('div');
+          div.className = 'group flex flex-col p-2 bg-slate-900/60 hover:bg-slate-900 rounded border border-gray-800 hover:border-gray-700 transition cursor-pointer relative';
+          
+          let formattedTime = sel.saved_at;
+          try {
+            const date = new Date(sel.saved_at);
+            if (!isNaN(date.getTime())) {
+              formattedTime = date.toISOString().replace('T', ' ').substring(0, 16);
+            }
+          } catch (e) {}
+          
+          div.innerHTML = `
+            <div class="flex items-start justify-between">
+              <div class="flex flex-col pr-6 min-w-0 flex-1 btn-view-note">
+                <span class="font-bold text-white truncate text-xs">${sel.selection_id}</span>
+                <span class="text-[10px] text-gray-500 mt-0.5">${formattedTime} &middot; ${sel.edge_count} roads</span>
+              </div>
+              
+              <div class="flex items-center space-x-1.5 z-10">
+                <!-- Toggle Layer -->
+                <label class="relative inline-flex items-center cursor-pointer" title="Toggle Layer Overlay">
+                  <input type="checkbox" id="layer-toggle-${sel.selection_id}" class="sr-only peer layer-toggle-input">
+                  <div class="w-7 h-4 bg-gray-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-600"></div>
+                </label>
+                
+                <!-- Load button -->
+                <button class="text-gray-400 hover:text-blue-400 transition btn-load-selection" title="Load into Active Workspace">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+                  </svg>
+                </button>
+                
+                <!-- Delete button -->
+                <button class="text-gray-400 hover:text-red-400 transition btn-delete-selection" title="Delete from DuckDB">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="w-3.5 h-3.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          `;
+          
+          // Bind click to show note
+          div.querySelector('.btn-view-note').addEventListener('click', () => {
+            selectSavedSelection(sel.selection_id, sel.description);
+            
+            // Visual active highlight: Remove border from all other list elements, add to this one
+            document.querySelectorAll('#saved-selections-list > div').forEach(el => {
+              el.classList.remove('border-l-4', 'border-emerald-500', 'bg-slate-900');
+            });
+            div.classList.add('border-l-4', 'border-emerald-500', 'bg-slate-900');
+          });
+          
+          // Bind toggle layer
+          div.querySelector('.layer-toggle-input').addEventListener('change', (e) => {
+            toggleSelectionLayer(e.target, sel.selection_id);
+            // Also select it to display explanation note!
+            selectSavedSelection(sel.selection_id, sel.description);
+          });
+          
+          // Bind load button
+          div.querySelector('.btn-load-selection').addEventListener('click', () => {
+            loadSavedIntoActive(sel.selection_id);
+            // Also select it to display explanation note!
+            selectSavedSelection(sel.selection_id, sel.description);
+          });
+          
+          // Bind delete button
+          div.querySelector('.btn-delete-selection').addEventListener('click', () => {
+            deleteSavedSelection(sel.selection_id);
+          });
+          
+          list.appendChild(div);
+        });
+      } catch (e) {
+        console.error("Failed to load saved selections:", e);
+      }
+    }
+
+    window.selectSavedSelection = function(selectionId, note) {
+      const noteBox = document.getElementById('saved-note-box');
+      const noteText = document.getElementById('saved-note-text');
+      
+      if (!note || note.trim() === '') {
+        noteText.textContent = "No explanatory note provided for this selection set.";
+      } else {
+        noteText.textContent = note;
+      }
+      noteBox.classList.remove('hidden');
+    };
+
+    window.toggleSelectionLayer = async function(checkbox, selectionId) {
+      if (checkbox.checked) {
+        showLoading('Loading Layer', `Fetching edges for ${selectionId}...`);
+        try {
+          const res = await fetch(`/api/selections/edges?db=${selectedDb}&selection_id=${encodeURIComponent(selectionId)}`);
+          const geojson = await res.json();
+          
+          if (savedSelectionLayers.has(selectionId)) {
+            map.removeLayer(savedSelectionLayers.get(selectionId));
+          }
+          
+          const layer = L.geoJSON(geojson, {
+            style: function(f) {
+              return {
+                color: '#00ff66', // Vibrant neon green selection layer
+                weight: 5,
+                opacity: 0.95,
+                lineCap: 'round',
+                lineJoin: 'round'
+              };
+            },
+            onEachFeature: function(feature, layer) {
+              layer.bindTooltip(`
+                <div>
+                  <div class="font-bold">${feature.properties.name}</div>
+                  <div class="text-xs text-gray-400 mt-0.5">Saved Set: ${selectionId}</div>
+                </div>
+              `, { sticky: true });
+            }
+          }).addTo(map);
+          
+          savedSelectionLayers.set(selectionId, layer);
+          hideLoading();
+        } catch (e) {
+          console.error(e);
+          checkbox.checked = false;
+          showLoading('Error Loading Layer', 'Failed to fetch saved selection edges.', true);
+        }
+      } else {
+        if (savedSelectionLayers.has(selectionId)) {
+          map.removeLayer(savedSelectionLayers.get(selectionId));
+          savedSelectionLayers.delete(selectionId);
+        }
+      }
+    };
+
+    window.loadSavedIntoActive = async function(selectionId) {
+      showLoading('Loading Workspace', `Loading ${selectionId} into workspace...`);
+      try {
+        const res = await fetch(`/api/selections/edges?db=${selectedDb}&selection_id=${encodeURIComponent(selectionId)}`);
+        const geojson = await res.json();
+        
+        selectedEdges.clear();
+        geojson.features.forEach(f => {
+          selectedEdges.set(f.properties.edge_id, {
+            edge_id: f.properties.edge_id,
+            name: f.properties.name,
+            highway: f.properties.highway,
+            length_m: f.properties.length_m,
+            geometry: f.geometry
+          });
+        });
+        
+        renderRoadsLayer();
+        updateSidebarSelections();
+        hideLoading();
+      } catch (e) {
+        console.error(e);
+        showLoading('Error Loading Selection', 'Failed to load selection into workspace.', true);
+      }
+    };
+
+    window.deleteSavedSelection = async function(selectionId) {
+      if (!confirm(`Are you sure you want to delete the selection "${selectionId}" permanently from DuckDB?`)) {
+        return;
+      }
+      
+      showLoading('Deleting Selection', `Removing ${selectionId} from DuckDB...`);
+      try {
+        const res = await fetch(`/api/selections?db=${selectedDb}&selection_id=${encodeURIComponent(selectionId)}`, {
+          method: 'DELETE'
+        });
+        
+        if (savedSelectionLayers.has(selectionId)) {
+          map.removeLayer(savedSelectionLayers.get(selectionId));
+          savedSelectionLayers.delete(selectionId);
+        }
+        
+        await loadSavedSelections();
+        hideLoading();
+      } catch (e) {
+        console.error(e);
+        showLoading('Error Deleting', 'Failed to delete selection from database.', true);
+      }
+    };
+
+    // Save Selection Listener
+    document.getElementById('btn-save-selection').addEventListener('click', async () => {
+      const nameInput = document.getElementById('save-name');
+      const noteInput = document.getElementById('save-note');
+      
+      let name = nameInput.value.trim();
+      const note = noteInput.value.trim();
+      
+      if (name === '') {
+        const now = new Date();
+        name = `Set - ${now.toISOString().replace('T', ' ').substring(0, 19)}`;
+      }
+      
+      const edgeIds = Array.from(selectedEdges.keys());
+      
+      showLoading('Saving Selection', `Writing selection "${name}" to DuckDB...`);
+      try {
+        await fetch(`/api/selections?db=${selectedDb}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            selection_id: name,
+            description: note,
+            edge_ids: edgeIds
+          })
+        });
+        
+        nameInput.value = '';
+        noteInput.value = '';
+        
+        await loadSavedSelections();
+        hideLoading();
+      } catch (e) {
+        console.error(e);
+        showLoading('Error Saving', 'Failed to write selection to DuckDB.', true);
+      }
+    });
+    document.getElementById('h3-toggle').addEventListener('change', () => {
+      renderH3Layer();
+    });
+
+    document.getElementById('h3-opacity').addEventListener('input', (e) => {
+      document.getElementById('h3-opacity-val').textContent = `${e.target.value}%`;
+      renderH3Layer();
+    });
+
+    document.getElementById('toggle-all-roads').addEventListener('click', (e) => {
+      if (enabledCategories.size === 0) {
+        enabledCategories = new Set(highwayCategories);
+        e.target.textContent = 'Select None';
+      } else {
+        enabledCategories.clear();
+        e.target.textContent = 'Select All';
+      }
+      
+      // Update check box inputs visually
+      document.querySelectorAll('#road-filters input').forEach(box => {
+        box.checked = enabledCategories.size > 0;
+      });
+      renderRoadsLayer();
+    });
+
+    document.getElementById('export-geojson').addEventListener('click', exportGeoJSON);
+    document.getElementById('export-csv').addEventListener('click', exportCSV);
+
+    // Run initialization on load
+    window.addEventListener('load', () => {
+      initMap();
+      loadDatabases();
+    });
+  </script>
+</body>
+</html>

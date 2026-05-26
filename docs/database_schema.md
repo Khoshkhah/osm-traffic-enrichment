@@ -296,9 +296,36 @@ The boundary GeoJSON used to filter the network (from notebook 0).
 
 ---
 
+## `main.saved_selections_meta` — Saved selection sets metadata
+
+Contains metadata and custom explanatory notes/descriptions for road selection sets saved via the Sensor Selector.
+
+| Column | Type | Description |
+|---|---|---|
+| `selection_id` | VARCHAR | Unique selection identifier/name (Primary Key) |
+| `description` | VARCHAR | Explanation note of why or how the segments were selected |
+| `saved_at` | TIMESTAMP | Timestamp of when the selection was written to DuckDB |
+
+---
+
+## `main.saved_selections` — Saved selection road mappings
+
+Contains normalized mappings of road edge IDs belonging to each saved selection set.
+
+| Column | Type | Description |
+|---|---|---|
+| `selection_id` | VARCHAR | Links to `saved_selections_meta.selection_id` |
+| `edge_id` | INTEGER | Links to `driving.edges.edge_id` |
+
+---
+
 ## Entity relationships
 
 ```
+saved_selections_meta.selection_id ── selection_id ── saved_selections.selection_id
+                                                               │
+                                         driving.edges ── edge_id
+
 runs ─────────────────────────────────────────────────────────────────────┐
   │  run_id                                                               │
   ├── mapbox_congestion_history.run_id ── edge_id ── driving.edges        │
