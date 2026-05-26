@@ -332,6 +332,15 @@ def main():
     write_summary(name, time.time() - t_total, log_path)
     log.info(f"\n  DuckDB → {db_path}")
 
+    if os.environ.get("MOTHERDUCK_TOKEN"):
+        log.info("  Syncing to MotherDuck...")
+        try:
+            from scripts.motherduck_sync import sync as md_sync
+            md_sync(db_path)
+            log.info("  MotherDuck sync complete.")
+        except Exception as e:
+            log.warning(f"  MotherDuck sync failed (non-fatal): {e}")
+
 
 if __name__ == "__main__":
     main()

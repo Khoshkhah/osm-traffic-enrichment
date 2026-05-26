@@ -1,6 +1,7 @@
 geopandas>=0.14
 shapely>=2.0
-duckdb>=1.0
+duckdb==1.5.2               # pinned: MotherDuck requires <=1.5.2 (check motherduck.com for updates)
+motherduck>=1.1              # MotherDuck cloud sync (scripts/motherduck_sync.py)
 mercantile>=1.2
 mapbox-vector-tile>=2.2
 requests>=2.31
