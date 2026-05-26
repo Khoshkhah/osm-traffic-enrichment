@@ -374,7 +374,9 @@
       try {
         const rows = await mdQuery(
           "SELECT database_name FROM duckdb_databases() " +
-          "WHERE NOT internal AND database_name NOT IN ('system','temp','memory') " +
+          "WHERE NOT internal " +
+          "  AND database_name NOT IN ('system','temp','memory','sample_data') " +
+          "  AND NOT starts_with(database_name, 'md_') " +
           "ORDER BY database_name"
         );
         const dbs = rows.map(r => r.database_name).filter(Boolean);
@@ -469,6 +471,16 @@
       document.getElementById('saved-note-box')?.classList.add('hidden');
 
       try {
+        // 0. Verify this is an osm-traffic-enrichment database
+        const schemaCheck = await mdQuery(
+          `SELECT count(*) AS n FROM duckdb_schemas() WHERE database_name = '${dbName}' AND schema_name = 'driving'`
+        );
+        if (!schemaCheck[0] || Number(schemaCheck[0].n) === 0) {
+          showLoading('Not a Traffic Database',
+            `"${dbName}" has no driving schema. Select an area database synced by motherduck_sync.py.`, true);
+          return;
+        }
+
         // 1. Roads + traffic
         showLoading('Loading Data', `Loading roads for ${dbName}...`);
         const roadsRows = await mdQuery(buildRoadsSQL(dbName, 'latest', 'latest', 'latest'));
