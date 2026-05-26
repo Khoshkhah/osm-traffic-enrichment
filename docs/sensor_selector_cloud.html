@@ -1113,7 +1113,9 @@
 
     // ── Startup ───────────────────────────────────────────────────────────────
     window.addEventListener('load', async () => {
-      const token = getSavedToken();
+      // ?token= in URL lets you share a direct link; saves to localStorage on first use
+      const urlToken = new URLSearchParams(window.location.search).get('token');
+      const token = urlToken || getSavedToken();
       if (token) {
         await connectWithToken(token);
       } else {
