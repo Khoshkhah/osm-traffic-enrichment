@@ -729,6 +729,17 @@ def main():
     log.info(f"Workspace Directory : {BASE_DIR}")
     log.info(f"Database Directory  : {DB_DIR}")
     
+    # Check and install spatial extension on startup if missing (helpful for clean cloud VM startup)
+    try:
+        log.info("Checking and installing DuckDB 'spatial' extension...")
+        con = duckdb.connect(":memory:")
+        con.execute("INSTALL spatial")
+        con.execute("LOAD spatial")
+        con.close()
+        log.info("DuckDB 'spatial' extension is ready!")
+    except Exception as e:
+        log.warning(f"DuckDB spatial extension setup warning: {e}")
+    
     # Try starting the server
     try:
         httpd = http.server.HTTPServer(server_address, SensorSelectorHandler)
