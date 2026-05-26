@@ -255,7 +255,6 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 
   <script type="module">
-    import { createMDConnection } from 'https://esm.sh/@motherduck/wasm-client@latest';
 
     // ── Constants ─────────────────────────────────────────────────────────────
     const TOKEN_KEY = 'md_token';
@@ -297,27 +296,18 @@
     const saveToken    = t  => localStorage.setItem(TOKEN_KEY, t);
     const clearToken   = () => localStorage.removeItem(TOKEN_KEY);
 
-    // ── Arrow → JS rows ───────────────────────────────────────────────────────
-    function arrowToRows(table) {
-      const rows = [];
-      const fields = table.schema.fields.map(f => f.name);
-      for (let i = 0; i < table.numRows; i++) {
-        const row = {};
-        fields.forEach(name => {
-          const col = table.getChild(name);
-          let val = col ? col.get(i) : null;
-          if (typeof val === 'bigint') val = Number(val);
-          row[name] = val;
-        });
-        rows.push(row);
-      }
-      return rows;
-    }
-
     // ── MotherDuck query helper ───────────────────────────────────────────────
     async function mdQuery(sql) {
-      const table = await mdConn.evaluateQuery(sql);
-      return arrowToRows(table);
+      const result = await mdConn.evaluateQuery(sql);
+      const rows = result.data.toRows();
+      // Normalize BigInt → Number for safe JS use
+      return rows.map(row => {
+        const out = {};
+        for (const [k, v] of Object.entries(row)) {
+          out[k] = typeof v === 'bigint' ? Number(v) : v;
+        }
+        return out;
+      });
     }
 
     // ── Loading overlay ───────────────────────────────────────────────────────
@@ -351,12 +341,18 @@
 
     // ── Connect with token ────────────────────────────────────────────────────
     async function connectWithToken(token) {
-      showLoading('Connecting', 'Connecting to MotherDuck...');
+      showLoading('Loading Client', 'Loading MotherDuck WASM client...');
       const errEl = document.getElementById('token-error');
       errEl.classList.add('hidden');
 
       try {
-        mdConn = await createMDConnection({ mdToken: token });
+        const { MDConnection } = await import('https://esm.sh/@motherduck/wasm-client@latest');
+
+        showLoading('Connecting', 'Connecting to MotherDuck...');
+        const conn = MDConnection.create({ mdToken: token });
+        await conn.isInitialized();
+        mdConn = conn;
+
         saveToken(token);
         document.getElementById('token-overlay').classList.add('hidden');
         const status = document.getElementById('connection-status');
@@ -365,6 +361,7 @@
         initMap();
         await loadDatabases();
       } catch (err) {
+        console.error('MotherDuck connection error:', err);
         errEl.textContent = 'Connection failed: ' + err.message;
         errEl.classList.remove('hidden');
         hideLoading();
