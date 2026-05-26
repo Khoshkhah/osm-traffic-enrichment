@@ -934,6 +934,9 @@
       const list = document.getElementById('saved-selections-list');
       try {
         const res = await fetch(`/api/selections?db=${selectedDb}`);
+        if (!res.ok) {
+          throw new Error(`Server returned HTTP ${res.status}`);
+        }
         const selections = await res.json();
         
         list.innerHTML = '';
@@ -1020,6 +1023,7 @@
         });
       } catch (e) {
         console.error("Failed to load saved selections:", e);
+        list.innerHTML = '<p class="text-gray-500 italic text-center py-2">No saved selections found in DuckDB</p>';
       }
     }
 

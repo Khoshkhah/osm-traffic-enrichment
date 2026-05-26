@@ -517,9 +517,15 @@ class SensorSelectorHandler(http.server.BaseHTTPRequestHandler):
         con = None
         try:
             con = duckdb.connect(str(db_path), read_only=True)
-            self.init_db_tables(con)
             
-            # Check if saved_selections_meta exists first (it should as we just ran init_db_tables)
+            # Check which tables exist in main schema dynamically
+            existing_tables = [r[0] for r in con.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").fetchall()]
+            
+            # If tables don't exist yet, there are zero selections. Return gracefully!
+            if "saved_selections_meta" not in existing_tables:
+                self.send_json([])
+                return
+            
             query = """
                 SELECT 
                     m.selection_id, 
@@ -565,7 +571,13 @@ class SensorSelectorHandler(http.server.BaseHTTPRequestHandler):
         try:
             con = duckdb.connect(str(db_path), read_only=True)
             con.execute("LOAD spatial")
-            self.init_db_tables(con)
+            
+            # Check which tables exist in main schema dynamically
+            existing_tables = [r[0] for r in con.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").fetchall()]
+            
+            if "saved_selections" not in existing_tables:
+                self.send_json({"type": "FeatureCollection", "features": []})
+                return
             
             query = """
                 SELECT 
