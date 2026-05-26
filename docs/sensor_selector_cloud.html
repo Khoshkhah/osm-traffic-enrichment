@@ -1115,7 +1115,9 @@
     window.addEventListener('load', async () => {
       // ?token= in URL lets you share a direct link; saves to localStorage on first use
       const urlToken = new URLSearchParams(window.location.search).get('token');
-      const token = urlToken || getSavedToken();
+      // %%MOTHERDUCK_TOKEN%% is replaced by GitHub Actions at deploy time (see .github/workflows/pages.yml)
+      const builtIn = '%%MOTHERDUCK_TOKEN%%';
+      const token = urlToken || getSavedToken() || (builtIn.includes('%') ? null : builtIn);
       if (token) {
         await connectWithToken(token);
       } else {
