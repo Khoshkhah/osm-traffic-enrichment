@@ -1,0 +1,15 @@
+# Traffic config for sundbyberg
+# Auto-generated during pipeline run on 2026-05-26 17:22:45 UTC
+
+name: sundbyberg
+db_path: db/sundbyberg.duckdb
+refresh: false
+
+traffic_sources:
+  - mapbox
+  - google
+  - tomtom
+
+mapbox_zoom: 14
+google_zoom: 16
+tomtom_zoom: 14

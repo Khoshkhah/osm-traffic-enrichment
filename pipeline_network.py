@@ -318,6 +318,91 @@ def generate_h3_cells(boundary_path: Path, db_path: Path,
     log.info(f"  boundary_cells total: {summary.to_dict('records')}")
 
 
+# ── Config Generation ────────────────────────────────────────────────────────
+
+def save_default_configs(name: str, boundary_path: Path, country_url: str | None,
+                         country_pbf: Path | None, resolutions: list[int]) -> None:
+    """Automatically create default network and traffic configs if they don't exist."""
+    config_dir = BASE_DIR / "config"
+    config_dir.mkdir(exist_ok=True)
+
+    # 1. Network config
+    net_cfg_path = config_dir / f"{name}.yaml"
+    if not net_cfg_path.exists():
+        log.info(f"  Generating network config: config/{name}.yaml")
+        lines = [
+            f"# Network config for {name}",
+            f"# Auto-generated during pipeline run on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
+            "",
+            f"name: {name}",
+            f"boundary_path: boundaries/{boundary_path.name}",
+        ]
+        if country_pbf:
+            try:
+                rel_pbf = country_pbf.relative_to(BASE_DIR)
+                lines.append(f"country_pbf: {rel_pbf}")
+            except ValueError:
+                lines.append(f"country_pbf: {country_pbf}")
+        elif country_url:
+            lines.append(f"country_url: {country_url}")
+        else:
+            lines.append("country_url: https://download.geofabrik.de/europe/sweden-latest.osm.pbf")
+
+        lines.extend([
+            "refresh: false",
+            "",
+            "h3_resolutions:",
+        ])
+        for res in resolutions:
+            lines.append(f"  - {res}")
+
+        lines.extend([
+            "",
+            "output_path: db",
+            "",
+            "options:",
+            "  build_graph: true",
+            "  h3_indexing: true",
+            "  simplify: true",
+            "  process_speeds: true",
+            "  extract_restrictions: true",
+            "  calculate_costs: true",
+            "",
+            "modes:",
+            "  - driving",
+            "  - walking",
+            "  - cycling",
+        ])
+        with open(net_cfg_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        log.info(f"  Saved network config to {net_cfg_path}")
+
+    # 2. Traffic config
+    traf_cfg_path = config_dir / f"{name}_traffic.yaml"
+    if not traf_cfg_path.exists():
+        log.info(f"  Generating traffic config: config/{name}_traffic.yaml")
+        lines = [
+            f"# Traffic config for {name}",
+            f"# Auto-generated during pipeline run on {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC",
+            "",
+            f"name: {name}",
+            f"db_path: db/{name}.duckdb",
+            "refresh: false",
+            "",
+            "traffic_sources:",
+            "  - mapbox",
+            "  - google",
+            "  - tomtom",
+            "",
+            "mapbox_zoom: 14",
+            "google_zoom: 16",
+            "tomtom_zoom: 14",
+        ]
+        with open(traf_cfg_path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        log.info(f"  Saved traffic config to {traf_cfg_path}")
+
+
 # ── Refresh ───────────────────────────────────────────────────────────────────
 
 def refresh_area(name: str, pbf_dir: Path, db_dir: Path) -> None:
@@ -437,6 +522,7 @@ def main():
         log.info(f"  Boundary    : {boundary}")
 
         # ── Country PBF ──────────────────────────────────────────────────
+        pbf_url = None
         if pbf_arg:
             pbf_input = Path(pbf_arg) if Path(pbf_arg).is_absolute() \
                         else BASE_DIR / pbf_arg
@@ -472,6 +558,9 @@ def main():
         if resolutions and not args.no_h3:
             with StepTimer("[3] Generate H3 boundary cells"):
                 generate_h3_cells(boundary, db_path, resolutions, output_dir)
+
+        # ── Save default configs if they do not exist ─────────────────────
+        save_default_configs(name, boundary, pbf_url, pbf_input if pbf_arg else None, resolutions)
 
     except Exception as e:
         log.error(f"\nPipeline FAILED: {e}")
