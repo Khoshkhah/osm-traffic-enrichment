@@ -351,6 +351,9 @@
         showLoading('Connecting', 'Connecting to MotherDuck...');
         const conn = MDConnection.create({ mdToken: token });
         await conn.isInitialized();
+
+        showLoading('Connecting', 'Loading spatial extension...');
+        await conn.evaluateQuery('INSTALL spatial; LOAD spatial;');
         mdConn = conn;
 
         saveToken(token);
