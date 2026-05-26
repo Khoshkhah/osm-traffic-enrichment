@@ -72,6 +72,7 @@ class TrafficDB:
     def _open(self) -> None:
         if self._con is None:
             self._con = duckdb.connect(str(self.db_path), read_only=self.read_only)
+            self._con.execute("INSTALL spatial")
             self._con.execute("LOAD spatial")
 
     def close(self) -> None:

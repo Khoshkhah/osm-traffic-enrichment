@@ -220,6 +220,7 @@ class TomTomTraffic:
         import duckdb
 
         con = duckdb.connect(str(db_path), read_only=True)
+        con.execute("INSTALL spatial")
         con.execute("LOAD spatial")
         df = con.execute(
             "SELECT edge_id, ST_AsText(geometry) wkt_geom FROM driving.edges"

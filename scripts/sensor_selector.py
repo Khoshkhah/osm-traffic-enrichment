@@ -159,6 +159,7 @@ class SensorSelectorHandler(http.server.BaseHTTPRequestHandler):
         con = None
         try:
             con = duckdb.connect(str(db_path), read_only=True)
+            con.execute("INSTALL spatial")
             con.execute("LOAD spatial")
             
             # Check which tables exist in main schema
@@ -324,6 +325,7 @@ class SensorSelectorHandler(http.server.BaseHTTPRequestHandler):
         con = None
         try:
             con = duckdb.connect(str(db_path), read_only=True)
+            con.execute("INSTALL spatial")
             con.execute("LOAD spatial")
             
             # Check if boundary_cells table exists
@@ -380,6 +382,7 @@ class SensorSelectorHandler(http.server.BaseHTTPRequestHandler):
         con = None
         try:
             con = duckdb.connect(str(db_path), read_only=True)
+            con.execute("INSTALL spatial")
             con.execute("LOAD spatial")
             
             # Check if boundary table exists
@@ -570,6 +573,7 @@ class SensorSelectorHandler(http.server.BaseHTTPRequestHandler):
         con = None
         try:
             con = duckdb.connect(str(db_path), read_only=True)
+            con.execute("INSTALL spatial")
             con.execute("LOAD spatial")
             
             # Check which tables exist in main schema dynamically

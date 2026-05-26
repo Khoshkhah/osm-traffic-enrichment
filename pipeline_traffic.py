@@ -157,6 +157,7 @@ def run_tomtom(db_path: Path, boundary: Path, zoom: int,
 def _export_edges(db_path: Path, edge_cong: dict, col: str,
                   geojson_out: Path, csv_out: Path) -> None:
     con = duckdb.connect(str(db_path), read_only=True)
+    con.execute("INSTALL spatial")
     con.execute("LOAD spatial")
     df = con.execute(
         "SELECT edge_id, highway, name, length_m, ST_AsText(geometry) wkt_geom "
@@ -204,6 +205,7 @@ def _get_boundary_geojson(db_path: Path, boundaries_dir: Path, name: str) -> Pat
 
     # Extract from DuckDB
     con = duckdb.connect(str(db_path), read_only=True)
+    con.execute("INSTALL spatial")
     con.execute("LOAD spatial")
     df = con.execute("SELECT ST_AsText(geom) AS wkt FROM boundary LIMIT 1").df()
     con.close()

@@ -265,6 +265,7 @@ def generate_h3_cells(boundary_path: Path, db_path: Path,
         return [(lat, lon) for lon, lat in coords]
 
     con = duckdb.connect(str(db_path))
+    con.execute("INSTALL spatial")
     con.execute("LOAD spatial")
     con.execute("""
         CREATE TABLE IF NOT EXISTS boundary_cells (
