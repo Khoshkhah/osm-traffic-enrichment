@@ -111,9 +111,302 @@
     /* Colored button hover — also keep white */
     .light-mode .hover\:bg-blue-500:hover.text-white,
     .light-mode .hover\:bg-emerald-500:hover.text-white { color: #ffffff !important; }
+
+    /* ── CSS custom properties for mobile chrome ──────────────────────────── */
+    [data-app-mode] { --accent: #22d3a3; --accent-ink: #04140d; }
+    [data-app-mode="dark"] {
+      --bg:#0b1014; --text:#e8eef3; --text-dim:rgba(232,238,243,0.6); --text-faint:rgba(232,238,243,0.35);
+      --panel:rgba(18,26,34,0.88); --border:rgba(255,255,255,0.09);
+      --surface-1:rgba(255,255,255,0.03); --surface-2:rgba(255,255,255,0.07);
+      --handle-strong:rgba(255,255,255,0.25); --input-bg:rgba(0,0,0,0.3); --sheet-bg:rgba(11,16,20,0.94);
+    }
+    [data-app-mode="light"] {
+      --bg:#f4f6f8; --text:#0e1620; --text-dim:rgba(14,22,32,0.62); --text-faint:rgba(14,22,32,0.38);
+      --panel:rgba(255,255,255,0.92); --border:rgba(14,22,32,0.12);
+      --surface-1:rgba(14,22,32,0.04); --surface-2:rgba(14,22,32,0.08);
+      --handle-strong:rgba(14,22,32,0.32); --input-bg:rgba(255,255,255,0.75); --sheet-bg:rgba(255,255,255,0.96);
+    }
+
+    /* ── Mobile breakpoint ────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      aside { display: none !important; }
+      main  { width: 100% !important; }
+      #mobile-chrome { display: block !important; }
+      .leaflet-control-zoom { display: none !important; }
+      .leaflet-control-layers { display: none !important; }
+    }
+
+    /* ── Mobile chrome container ──────────────────────────────────────────── */
+    #mobile-chrome {
+      display: none; position: absolute; inset: 0;
+      pointer-events: none; z-index: 800;
+      font-family: 'Inter', -apple-system, system-ui, sans-serif;
+    }
+    #mobile-chrome *, #mobile-chrome *::before, #mobile-chrome *::after { box-sizing: border-box; }
+    #mobile-chrome button, #mobile-chrome input,
+    #mobile-chrome textarea, #mobile-chrome select { pointer-events: auto; }
+
+    /* ── Top bar ──────────────────────────────────────────────────────────── */
+    #mob-topbar {
+      position: absolute; top: 12px; left: 12px; right: 12px;
+      height: 48px; display: flex; align-items: center; gap: 10px; pointer-events: auto;
+    }
+    #mob-area-btn {
+      flex: 1; height: 44px; background: var(--panel);
+      backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border: 1px solid var(--border); border-radius: 22px;
+      display: flex; align-items: center; gap: 10px; padding: 0 16px;
+      cursor: pointer; font-family: inherit; box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    }
+    #mob-area-name { flex: 1; font-size: 14px; font-weight: 500; color: var(--text); text-align: left; }
+    #mob-live-dot {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.4px; color: #22d3a3;
+      display: flex; align-items: center; gap: 5px; white-space: nowrap;
+    }
+    #mob-live-dot::before {
+      content: ''; display: inline-block; width: 6px; height: 6px;
+      background: #22d3a3; border-radius: 50%; animation: pulse 2s ease-in-out infinite;
+    }
+    .mob-top-btn {
+      width: 44px; height: 44px; border-radius: 22px; flex-shrink: 0;
+      background: var(--panel);
+      backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border: 1px solid var(--border); color: var(--text); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.2);
+    }
+
+    /* ── FABs ─────────────────────────────────────────────────────────────── */
+    #mob-fabs {
+      position: absolute; right: 12px; top: 72px;
+      display: flex; flex-direction: column; gap: 8px; pointer-events: auto;
+    }
+    .mob-fab {
+      width: 44px; height: 44px; border-radius: 22px;
+      background: var(--panel);
+      backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border: 1px solid var(--border); color: var(--text); cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.25); transition: background 150ms, color 150ms, border-color 150ms;
+    }
+    .mob-fab.active { background: #22d3a3; border-color: #22d3a3; color: #04140d; }
+
+    /* ── FAB popovers ─────────────────────────────────────────────────────── */
+    .mob-popover {
+      position: absolute; right: 64px;
+      background: var(--panel);
+      backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border: 1px solid var(--border); border-radius: 14px; padding: 8px;
+      pointer-events: auto; z-index: 900; min-width: 180px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+    }
+    .mob-popover.hidden { display: none !important; }
+    #mob-pop-style  { top: 72px; }
+    #mob-pop-hex    { top: 124px; min-width: 200px; }
+    #mob-pop-hist   { top: 176px; min-width: 220px; }
+    #mob-pop-layers { top: 72px; right: 64px; min-width: 220px; padding: 10px; }
+    .mob-pop-item {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px;
+      background: transparent; border: none; border-radius: 8px;
+      color: var(--text); font-size: 13px; font-family: inherit;
+      cursor: pointer; text-align: left; transition: background 120ms; line-height: 1.3;
+    }
+    .mob-pop-item:hover { background: var(--surface-2); }
+    .mob-pop-item.active { background: rgba(34,211,163,0.12); }
+    .mob-pop-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+      background: rgba(255,255,255,0.2);
+    }
+    [data-app-mode="light"] .mob-pop-dot { background: rgba(0,0,0,0.15); }
+    .mob-pop-item.active .mob-pop-dot { background: #22d3a3; }
+    .mob-layers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    .mob-layer-card {
+      padding: 8px; border-radius: 10px; border: 1px solid var(--border);
+      background: var(--surface-1); cursor: pointer; text-align: left;
+      transition: background 120ms, border-color 120ms;
+    }
+    .mob-layer-card.active { background: rgba(34,211,163,0.1); border-color: #22d3a3; }
+    .mob-layer-preview {
+      height: 36px; border-radius: 6px; margin-bottom: 5px; position: relative; overflow: hidden;
+    }
+    .mob-layer-label { font-size: 11px; font-weight: 500; color: var(--text); font-family: inherit; }
+    /* H3 popover */
+    .mob-h3-section-label {
+      font-size: 10px; font-family: 'JetBrains Mono', monospace; letter-spacing: 0.8px;
+      color: var(--text-dim); text-transform: uppercase; margin-bottom: 6px;
+    }
+    .mob-h3-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .mob-switch {
+      width: 38px; height: 22px; border-radius: 99px; border: none; position: relative;
+      cursor: pointer; padding: 0; transition: background 200ms; flex-shrink: 0;
+      background: rgba(255,255,255,0.15);
+    }
+    [data-app-mode="light"] .mob-switch { background: rgba(0,0,0,0.12); }
+    .mob-switch.on { background: #22d3a3; }
+    .mob-switch-thumb {
+      position: absolute; top: 2px; left: 2px;
+      width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: left 200ms;
+    }
+    .mob-switch.on .mob-switch-thumb { left: 18px; }
+    .mob-h3-slider { width: 100%; accent-color: #22d3a3; }
+    .mob-h3-res-btns { display: flex; gap: 6px; margin-top: 8px; }
+    .mob-h3-res-btn {
+      flex: 1; height: 30px; font-size: 11px; font-family: 'JetBrains Mono', monospace;
+      background: var(--surface-2); color: var(--text); border: none; border-radius: 6px;
+      cursor: pointer; font-weight: 600; transition: background 120ms, color 120ms;
+    }
+    .mob-h3-res-btn.active { background: #22d3a3; color: #04140d; }
+
+    /* ── Bottom sheet ─────────────────────────────────────────────────────── */
+    #mob-sheet {
+      position: absolute; left: 0; right: 0; bottom: 0; height: 92px;
+      background: var(--sheet-bg);
+      backdrop-filter: blur(20px) saturate(160%); -webkit-backdrop-filter: blur(20px) saturate(160%);
+      border-top: 1px solid var(--border); border-radius: 20px 20px 0 0;
+      box-shadow: 0 -12px 32px rgba(0,0,0,0.25);
+      transition: height 320ms cubic-bezier(0.32,0.72,0,1);
+      pointer-events: auto; display: flex; flex-direction: column; overflow: hidden;
+    }
+    #mob-sheet-handle-area {
+      padding: 10px 0 4px; display: flex; justify-content: center;
+      cursor: grab; touch-action: none; flex-shrink: 0;
+    }
+    #mob-sheet-handle-area:active { cursor: grabbing; }
+    #mob-sheet-handle { width: 36px; height: 5px; border-radius: 99px; background: var(--handle-strong); }
+    /* Peek row */
+    #mob-peek-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 16px 10px; flex-shrink: 0;
+    }
+    #mob-peek-info { flex: 1; }
+    .mob-meta-label {
+      font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+      color: var(--text-dim); font-family: 'JetBrains Mono', monospace; margin-bottom: 2px;
+    }
+    #mob-peek-count { font-size: 15px; font-weight: 600; color: var(--text); font-family: 'JetBrains Mono', monospace; }
+    #mob-btn-clear-sel {
+      width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+      background: rgba(255,77,109,0.12); border: 1px solid rgba(255,77,109,0.3);
+      color: #ff8a9c; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    }
+    #mob-btn-clear-sel.mob-hidden { opacity: 0; pointer-events: none; }
+    #mob-btn-save-sel {
+      height: 36px; padding: 0 14px; border-radius: 99px; flex-shrink: 0;
+      background: #22d3a3; border: none; color: #04140d; font-size: 13px; font-weight: 700;
+      font-family: inherit; cursor: pointer; display: flex; align-items: center; gap: 6px;
+    }
+    #mob-btn-save-sel.mob-disabled { opacity: 0.35; pointer-events: none; }
+    /* Tabs */
+    #mob-tab-bar {
+      display: flex; gap: 4px; padding: 0 16px 10px;
+      border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    #mob-tab-bar.mob-hidden { display: none; }
+    .mob-tab {
+      padding: 8px 10px; background: transparent; border: none; border-bottom: 2px solid transparent;
+      color: var(--text-dim); font-size: 13px; font-family: inherit; font-weight: 500; cursor: pointer;
+      margin-bottom: -1px; transition: color 150ms, border-color 150ms;
+    }
+    .mob-tab.active { color: #22d3a3; border-bottom-color: #22d3a3; }
+    /* Tab content */
+    #mob-tab-content { flex: 1; overflow-y: auto; padding: 12px 16px 80px; }
+    #mob-tab-content.mob-hidden { display: none; }
+    .mob-tab-panel { display: none; }
+    .mob-tab-panel.active { display: block; }
+    /* Selection chips */
+    .mob-seg-chip {
+      display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+      background: var(--surface-1); border-radius: 10px; border: 1px solid var(--border); margin-bottom: 6px;
+    }
+    .mob-seg-bar { width: 4px; height: 28px; border-radius: 2px; flex-shrink: 0; }
+    .mob-seg-info { flex: 1; min-width: 0; }
+    .mob-seg-name { font-size: 13px; font-weight: 500; color: var(--text); font-family: 'JetBrains Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mob-seg-meta { font-size: 11px; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; margin-top: 2px; }
+    .mob-seg-remove { background: none; border: none; color: var(--text-faint); cursor: pointer; padding: 4px; }
+    /* Filter rows */
+    .mob-section-label {
+      font-size: 10px; letter-spacing: 0.8px; text-transform: uppercase;
+      color: var(--text-dim); font-family: 'JetBrains Mono', monospace; margin: 14px 0 8px;
+    }
+    .mob-section-label:first-child { margin-top: 0; }
+    .mob-filter-row {
+      display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+      margin-bottom: 6px; cursor: pointer;
+    }
+    .mob-filter-dot { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+    .mob-filter-label { flex: 1; color: var(--text); font-size: 14px; text-transform: capitalize; }
+    .mob-checkbox {
+      width: 22px; height: 22px; border-radius: 6px; flex-shrink: 0;
+      background: transparent; border: 1.5px solid rgba(255,255,255,0.22);
+      display: flex; align-items: center; justify-content: center; transition: background 150ms, border-color 150ms;
+    }
+    [data-app-mode="light"] .mob-checkbox { border-color: rgba(0,0,0,0.22); }
+    .mob-filter-row.active .mob-checkbox { background: #22d3a3; border-color: #22d3a3; }
+    .mob-checkbox-check { opacity: 0; }
+    .mob-filter-row.active .mob-checkbox-check { opacity: 1; }
+    /* Saved cards */
+    .mob-saved-card {
+      padding: 14px; background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 12px; margin-bottom: 8px;
+    }
+    .mob-saved-name { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; color: var(--text); }
+    .mob-saved-date { font-size: 10px; font-family: 'JetBrains Mono', monospace; color: var(--text-faint); }
+    .mob-saved-note { font-size: 12px; color: var(--text-dim); margin: 4px 0 6px; }
+    .mob-saved-meta { font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-faint); margin-bottom: 10px; }
+    .mob-saved-actions { display: flex; gap: 6px; }
+    .mob-saved-load {
+      flex: 1; height: 32px; font-size: 12px; font-family: inherit; font-weight: 500;
+      background: rgba(34,211,163,0.12); color: #22d3a3; border: 1px solid rgba(34,211,163,0.25);
+      border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 5px;
+    }
+    .mob-saved-action-btn {
+      width: 32px; height: 32px; background: var(--surface-2); color: var(--text-dim);
+      border: 1px solid var(--border); border-radius: 8px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* Export */
+    .mob-export-section { margin-bottom: 16px; }
+    .mob-input {
+      width: 100%; height: 42px; padding: 0 12px;
+      background: var(--input-bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; font-size: 14px; font-family: 'JetBrains Mono', monospace; outline: none; margin-bottom: 8px;
+    }
+    .mob-textarea {
+      width: 100%; padding: 10px 12px; background: var(--input-bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; font-size: 13px; font-family: inherit;
+      outline: none; resize: none; margin-bottom: 10px;
+    }
+    .mob-btn-primary {
+      width: 100%; height: 44px; background: #22d3a3; color: #04140d; border: none;
+      border-radius: 10px; font-size: 14px; font-weight: 700; font-family: inherit; cursor: pointer;
+    }
+    .mob-btn-primary:disabled { opacity: 0.38; cursor: default; }
+    .mob-export-row {
+      display: flex; align-items: center; gap: 12px; padding: 14px;
+      background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+      cursor: pointer; margin-bottom: 8px; transition: opacity 150ms;
+    }
+    .mob-export-row.disabled { opacity: 0.4; cursor: default; pointer-events: none; }
+    .mob-export-icon {
+      width: 36px; height: 36px; border-radius: 8px; background: rgba(34,211,163,0.12);
+      display: flex; align-items: center; justify-content: center; color: #22d3a3; flex-shrink: 0;
+    }
+    .mob-export-name { font-size: 14px; font-weight: 500; color: var(--text); }
+    .mob-export-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+    /* Toast */
+    #mob-toast {
+      position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%);
+      background: var(--panel); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border); border-radius: 99px;
+      padding: 10px 18px; font-size: 13px; color: var(--text);
+      display: flex; align-items: center; gap: 8px; white-space: nowrap;
+      pointer-events: none; opacity: 1; transition: opacity 300ms; z-index: 950;
+    }
+    #mob-toast.hidden { opacity: 0; }
   </style>
 </head>
-<body class="overflow-hidden h-screen w-screen flex light-mode">
+<body class="overflow-hidden h-screen w-screen flex light-mode" data-app-mode="light">
 
   <!-- ── Token Auth Overlay ───────────────────────────────────────────────── -->
   <div id="token-overlay" class="hidden fixed inset-0 bg-slate-950/95 backdrop-blur-sm z-[99999] flex items-center justify-center">
@@ -328,6 +621,141 @@
         <p id="loading-msg" class="text-xs text-gray-400 mt-1">Initializing...</p>
       </div>
     </div>
+
+    <!-- ── Mobile Chrome (shown on ≤768px) ───────────────────────────────── -->
+    <div id="mobile-chrome">
+
+      <!-- Top bar -->
+      <div id="mob-topbar">
+        <button id="mob-area-btn">
+          <span id="mob-area-name">Connecting...</span>
+          <span id="mob-live-dot" style="display:none">LIVE</span>
+        </button>
+        <button class="mob-top-btn" id="mob-btn-theme-top" title="Toggle theme">
+          <svg id="mob-icon-sun" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />
+          </svg>
+          <svg id="mob-icon-moon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="18" height="18" style="display:none">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />
+          </svg>
+        </button>
+      </div>
+
+      <!-- Right FABs -->
+      <div id="mob-fabs">
+        <button class="mob-fab" id="mob-fab-style" title="Road Style">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" width="18" height="18"><circle cx="12" cy="12" r="9"/><circle cx="7.5" cy="10.5" r="1" fill="currentColor"/><circle cx="12" cy="7.5" r="1" fill="currentColor"/><circle cx="16.5" cy="10.5" r="1" fill="currentColor"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a3 3 0 003-3 2 2 0 012-2h1a2 2 0 002-2"/></svg>
+        </button>
+        <button class="mob-fab" id="mob-fab-hex" title="H3 Grid">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2l9 5v10l-9 5-9-5V7l9-5z"/></svg>
+        </button>
+        <button class="mob-fab" id="mob-fab-history" title="Traffic History">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M3 12a9 9 0 109-9 9 9 0 00-6.4 2.6L3 8"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 3v5h5"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 2"/></svg>
+        </button>
+        <button class="mob-fab" id="mob-fab-layers" title="Base Layer">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" width="18" height="18"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3l9 5-9 5-9-5 9-5z"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 13l9 5 9-5"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 18l9 5 9-5"/></svg>
+        </button>
+      </div>
+
+      <!-- FAB popovers -->
+      <div id="mob-pop-style" class="mob-popover hidden"></div>
+      <div id="mob-pop-hex" class="mob-popover hidden">
+        <div style="padding:4px">
+          <div class="mob-h3-row">
+            <span class="mob-h3-section-label" style="margin:0">Show H3 Grid</span>
+            <button class="mob-switch" id="mob-h3-switch"><div class="mob-switch-thumb"></div></button>
+          </div>
+          <div class="mob-h3-section-label">Opacity <span id="mob-h3-opval">17%</span></div>
+          <input type="range" class="mob-h3-slider" id="mob-h3-opacity" min="0" max="100" value="17">
+          <div class="mob-h3-res-btns" id="mob-h3-res-btns"></div>
+        </div>
+      </div>
+      <div id="mob-pop-hist" class="mob-popover hidden">
+        <div id="mob-hist-content" style="max-height:260px;overflow-y:auto"></div>
+      </div>
+      <div id="mob-pop-layers" class="mob-popover hidden">
+        <div class="mob-layers-grid" id="mob-layers-grid"></div>
+      </div>
+
+      <!-- Bottom sheet -->
+      <div id="mob-sheet">
+        <div id="mob-sheet-handle-area"><div id="mob-sheet-handle"></div></div>
+        <!-- Peek row -->
+        <div id="mob-peek-row">
+          <div id="mob-peek-info">
+            <div class="mob-meta-label">Active Selection</div>
+            <div id="mob-peek-count">0 segments · 0.00 km</div>
+          </div>
+          <button id="mob-btn-clear-sel" class="mob-hidden" title="Clear selection">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="15" height="15"><path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+          </button>
+          <button id="mob-btn-save-sel" class="mob-disabled" title="Save to MotherDuck">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z"/></svg>
+            Save
+          </button>
+        </div>
+        <!-- Tab bar -->
+        <div id="mob-tab-bar" class="mob-hidden">
+          <button class="mob-tab active" data-tab="selection">Selection</button>
+          <button class="mob-tab" data-tab="filters">Filters</button>
+          <button class="mob-tab" data-tab="saved">Saved</button>
+          <button class="mob-tab" data-tab="export">Export</button>
+        </div>
+        <!-- Tab content -->
+        <div id="mob-tab-content" class="mob-hidden">
+          <div id="mob-tab-selection" class="mob-tab-panel active">
+            <p style="text-align:center;padding:32px 0;color:var(--text-dim);font-size:14px">Tap road segments on the map</p>
+          </div>
+          <div id="mob-tab-filters" class="mob-tab-panel">
+            <div class="mob-section-label">Road Category</div>
+            <div id="mob-road-filters"></div>
+            <div class="mob-section-label" style="margin-top:16px">H3 Hexagon Grid</div>
+            <div style="background:var(--surface-1);border-radius:10px;padding:14px;border:1px solid var(--border)">
+              <div class="mob-h3-row">
+                <span style="font-size:14px;color:var(--text)">Show grid</span>
+                <button class="mob-switch" id="mob-h3-switch-tab"><div class="mob-switch-thumb"></div></button>
+              </div>
+              <div style="display:flex;justify-content:space-between;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.8px;color:var(--text-dim);margin:8px 0 6px;text-transform:uppercase">
+                <span>Opacity</span><span id="mob-h3-opval-tab">17%</span>
+              </div>
+              <input type="range" class="mob-h3-slider" id="mob-h3-opacity-tab" min="0" max="100" value="17">
+              <div class="mob-h3-res-btns" id="mob-h3-res-btns-tab" style="margin-top:10px"></div>
+            </div>
+          </div>
+          <div id="mob-tab-saved" class="mob-tab-panel">
+            <p style="text-align:center;padding:24px 0;color:var(--text-dim);font-size:14px">No saved selections</p>
+          </div>
+          <div id="mob-tab-export" class="mob-tab-panel">
+            <div class="mob-export-section">
+              <div class="mob-section-label">Save to MotherDuck</div>
+              <div style="background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px">
+                <input class="mob-input" id="mob-save-name" placeholder="Selection Name..." autocomplete="off">
+                <textarea class="mob-textarea" id="mob-save-note" rows="2" placeholder="Explanation note (optional)..."></textarea>
+                <button class="mob-btn-primary" id="mob-btn-save-md" disabled>Save to MotherDuck</button>
+              </div>
+            </div>
+            <div class="mob-export-section">
+              <div class="mob-section-label">Download</div>
+              <div class="mob-export-row disabled" id="mob-export-geojson">
+                <div class="mob-export-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg></div>
+                <div><div class="mob-export-name">GeoJSON</div><div class="mob-export-sub" id="mob-geojson-sub">Select segments first</div></div>
+              </div>
+              <div class="mob-export-row disabled" id="mob-export-csv">
+                <div class="mob-export-icon"><svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg></div>
+                <div><div class="mob-export-name">CSV (WKT)</div><div class="mob-export-sub">LINESTRING geometries</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Toast -->
+      <div id="mob-toast" class="hidden">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="#22d3a3" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>
+        <span id="mob-toast-text"></span>
+      </div>
+
+    </div>
   </main>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
@@ -377,8 +805,14 @@
       const isDark = theme === 'dark';
       document.body.classList.toggle('dark-mode',  isDark);
       document.body.classList.toggle('light-mode', !isDark);
+      document.body.dataset.appMode = theme;
       document.getElementById('icon-sun').classList.toggle('hidden',  isDark);
       document.getElementById('icon-moon').classList.toggle('hidden', !isDark);
+      // Mobile theme icons
+      const mSun  = document.getElementById('mob-icon-sun');
+      const mMoon = document.getElementById('mob-icon-moon');
+      if (mSun)  mSun.style.display  = isDark ? 'none' : 'block';
+      if (mMoon) mMoon.style.display = isDark ? 'block' : 'none';
       localStorage.setItem(THEME_KEY, theme);
     }
 
@@ -642,6 +1076,10 @@
         updateRunSelectorUI();
         await loadSavedSelections();
         hideLoading();
+        updateMobileAreaPill?.(dbName);
+        buildMobStylePopover?.();
+        buildMobHistoryPopover?.();
+        buildMobLayersPopover?.();
       } catch (err) {
         console.error(err);
         showLoading('Error Loading Data', `Failed to query ${dbName}: ${err.message}`, true);
@@ -786,6 +1224,7 @@
         container.appendChild(div);
       });
       document.getElementById('toggle-all-roads').textContent = 'Select None';
+      buildMobileRoadFilters?.();
     }
 
     function buildH3ResolutionToggles(resolutions) {
@@ -810,6 +1249,7 @@
         });
         container.appendChild(btn);
       });
+      buildMobH3ResBtns?.();
     }
 
     // ── Active selection sidebar ──────────────────────────────────────────────
@@ -828,6 +1268,7 @@
         lengthLbl.textContent = '0.0 km';
         geoBtn.disabled = csvBtn.disabled = true;
         if (saveBtn) saveBtn.disabled = true;
+        syncMobilePeek?.(); syncMobileSelectionTab?.();
         return;
       }
 
@@ -862,6 +1303,7 @@
         list.appendChild(div);
       });
       lengthLbl.textContent = `${(totalM / 1000).toFixed(2)} km`;
+      syncMobilePeek?.(); syncMobileSelectionTab?.();
     }
 
     window.removeSelection = function(edge_id) {
@@ -970,6 +1412,7 @@
           );
           list.appendChild(div);
         });
+        buildMobileSavedCards?.();
       } catch (e) {
         console.error('Failed to load saved selections:', e);
         list.innerHTML = '<p class="text-gray-500 italic text-center py-2">Error loading selections</p>';
@@ -1211,6 +1654,522 @@
     document.getElementById('token-input').addEventListener('keydown', e => {
       if (e.key === 'Enter') document.getElementById('btn-connect').click();
     });
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Mobile Chrome
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // ── Bottom sheet snap ─────────────────────────────────────────────────────
+    const MOB_SHEET       = document.getElementById('mob-sheet');
+    const MOB_HANDLE_AREA = document.getElementById('mob-sheet-handle-area');
+    const MOB_TAB_BAR     = document.getElementById('mob-tab-bar');
+    const MOB_TAB_CONTENT = document.getElementById('mob-tab-content');
+    let mobSnap = 'peek', mobDragStartY = 0, mobDragStartH = 0, mobIsDragging = false;
+
+    function mobSnapHeights() {
+      return { peek: 92, mid: Math.round(window.innerHeight * 0.44), full: Math.round(window.innerHeight * 0.88) };
+    }
+
+    function mobSetSnap(s) {
+      mobSnap = s;
+      MOB_SHEET.style.transition = 'height 320ms cubic-bezier(0.32,0.72,0,1)';
+      MOB_SHEET.style.height = mobSnapHeights()[s] + 'px';
+      const expanded = s !== 'peek';
+      MOB_TAB_BAR.classList.toggle('mob-hidden', !expanded);
+      MOB_TAB_CONTENT.classList.toggle('mob-hidden', !expanded);
+    }
+
+    MOB_HANDLE_AREA.addEventListener('pointerdown', e => {
+      mobIsDragging = true;
+      mobDragStartY = e.clientY;
+      mobDragStartH = parseFloat(MOB_SHEET.style.height) || mobSnapHeights()[mobSnap];
+      MOB_SHEET.style.transition = 'none';
+      MOB_HANDLE_AREA.setPointerCapture(e.pointerId);
+    });
+    MOB_HANDLE_AREA.addEventListener('pointermove', e => {
+      if (!mobIsDragging) return;
+      const dy = mobDragStartY - e.clientY;
+      const heights = mobSnapHeights();
+      MOB_SHEET.style.height = Math.max(60, Math.min(heights.full + 20, mobDragStartH + dy)) + 'px';
+    });
+    MOB_HANDLE_AREA.addEventListener('pointerup', e => {
+      if (!mobIsDragging) return;
+      mobIsDragging = false;
+      const dy = mobDragStartY - e.clientY;
+      let next = mobSnap;
+      if (Math.abs(dy) < 10) {
+        next = mobSnap === 'peek' ? 'mid' : mobSnap === 'mid' ? 'full' : 'peek';
+      } else {
+        if (dy > 60)  next = mobSnap === 'peek' ? 'mid' : 'full';
+        if (dy < -60) next = mobSnap === 'full' ? 'mid' : 'peek';
+      }
+      mobSetSnap(next);
+    });
+
+    // ── Tab switching ─────────────────────────────────────────────────────────
+    document.querySelectorAll('.mob-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.mob-tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.mob-tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById('mob-tab-' + btn.dataset.tab)?.classList.add('active');
+      });
+    });
+
+    // ── FAB popover toggle ────────────────────────────────────────────────────
+    const MOB_FAB_POP_MAP = {
+      'mob-fab-style': 'mob-pop-style', 'mob-fab-hex': 'mob-pop-hex',
+      'mob-fab-history': 'mob-pop-hist', 'mob-fab-layers': 'mob-pop-layers',
+    };
+
+    function closeAllMobPopovers(exceptPopId) {
+      Object.values(MOB_FAB_POP_MAP).forEach(id => {
+        if (id !== exceptPopId) document.getElementById(id)?.classList.add('hidden');
+      });
+      document.querySelectorAll('.mob-fab').forEach(f => {
+        const pop = MOB_FAB_POP_MAP[f.id];
+        if (pop !== exceptPopId) f.classList.remove('active');
+      });
+    }
+
+    document.querySelectorAll('.mob-fab').forEach(fab => {
+      fab.addEventListener('click', e => {
+        e.stopPropagation();
+        const popId = MOB_FAB_POP_MAP[fab.id];
+        if (!popId) return;
+        const pop = document.getElementById(popId);
+        const isOpen = !pop.classList.contains('hidden');
+        closeAllMobPopovers();
+        if (!isOpen) {
+          // Refresh content before showing
+          if (popId === 'mob-pop-style')   buildMobStylePopover();
+          if (popId === 'mob-pop-hist')    buildMobHistoryPopover();
+          if (popId === 'mob-pop-layers')  buildMobLayersPopover();
+          pop.classList.remove('hidden');
+          fab.classList.add('active');
+        }
+      });
+    });
+
+    document.addEventListener('click', e => {
+      if (!e.target.closest('.mob-popover') && !e.target.closest('.mob-fab') &&
+          !e.target.closest('#mob-area-picker')) {
+        closeAllMobPopovers();
+        document.getElementById('mob-area-picker')?.remove();
+      }
+    });
+
+    // ── Style popover ─────────────────────────────────────────────────────────
+    function buildMobStylePopover() {
+      const themes = [
+        { id: 'color',  label: 'OSM Category' }, { id: 'gray',  label: 'Monochrome Gray' },
+        { id: 'white',  label: 'Monochrome White' }, { id: 'mapbox', label: 'Mapbox Congestion' },
+        { id: 'google', label: 'Google Congestion' }, { id: 'tomtom', label: 'TomTom Congestion' },
+      ];
+      const pop = document.getElementById('mob-pop-style');
+      pop.innerHTML = '';
+      themes.forEach(t => {
+        const btn = document.createElement('button');
+        btn.className = 'mob-pop-item' + (baseRoadsTheme === t.id ? ' active' : '');
+        btn.innerHTML = `<span class="mob-pop-dot"></span>${t.label}`;
+        btn.addEventListener('click', () => {
+          baseRoadsTheme = t.id;
+          document.getElementById('theme-select').value = t.id;
+          updateRunSelectorUI();
+          if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.has(f.properties.edge_id)));
+          closeAllMobPopovers();
+        });
+        pop.appendChild(btn);
+      });
+    }
+
+    // ── History popover ───────────────────────────────────────────────────────
+    function buildMobHistoryPopover() {
+      const content = document.getElementById('mob-hist-content');
+      const isTraffic = ['mapbox','google','tomtom'].includes(baseRoadsTheme);
+      if (!isTraffic || !allRuns.length) {
+        content.innerHTML = '<div style="padding:12px 8px;font-size:12px;color:var(--text-dim);text-align:center">Select a traffic theme<br>to browse history</div>';
+        return;
+      }
+      const sourceRuns = allRuns.filter(r => r.source === baseRoadsTheme);
+      if (!sourceRuns.length) {
+        content.innerHTML = '<div style="padding:12px 8px;font-size:12px;color:var(--text-dim);text-align:center">No history runs found</div>';
+        return;
+      }
+      const curRunId = baseRoadsTheme === 'mapbox' ? mapboxRunId : (baseRoadsTheme === 'google' ? googleRunId : tomtomRunId);
+      content.innerHTML = '<div class="mob-h3-section-label" style="padding:4px 8px 8px">History Run</div>';
+      const addRunBtn = (label, val) => {
+        const btn = document.createElement('button');
+        btn.className = 'mob-pop-item' + (String(curRunId) === String(val) ? ' active' : '');
+        btn.innerHTML = `<span class="mob-pop-dot"></span><span>${label}</span>`;
+        btn.addEventListener('click', () => mobSelectRun(val));
+        content.appendChild(btn);
+      };
+      addRunBtn('Latest Snapshot', 'latest');
+      sourceRuns.forEach(run => addRunBtn(`Run #${run.run_id}  ${run.fetched_at.substring(0,16)}`, run.run_id));
+    }
+
+    async function mobSelectRun(runId) {
+      if (baseRoadsTheme === 'mapbox')      mapboxRunId = runId;
+      else if (baseRoadsTheme === 'google') googleRunId = runId;
+      else if (baseRoadsTheme === 'tomtom') tomtomRunId = runId;
+      document.getElementById('run-select').value = runId;
+      closeAllMobPopovers();
+      showLoading('Updating Roads', 'Fetching run data...');
+      try {
+        const rows = await mdQuery(buildRoadsSQL(selectedDb, mapboxRunId, googleRunId, tomtomRunId));
+        roadsData = rowsToRoadsGeoJSON(rows);
+        renderRoadsLayer();
+        selectedEdges.forEach((val, key) => {
+          const match = roadsData.features.find(f => f.properties.edge_id === key);
+          if (match) selectedEdges.set(key, { ...match.properties, geometry: match.geometry });
+        });
+        updateSidebarSelections();
+        hideLoading();
+      } catch (err) {
+        showLoading('Error', 'Failed to fetch run: ' + err.message, true);
+      }
+    }
+
+    // ── Layers popover ────────────────────────────────────────────────────────
+    function buildMobLayersPopover() {
+      const grid = document.getElementById('mob-layers-grid');
+      grid.innerHTML = '';
+      const layerDefs = [
+        { id: 'Voyager',       label: 'Voyager',       bg: 'linear-gradient(180deg,#e8eef0,#d8e0e5)', roads: ['#ff9933','#e8ecef','#9ec5fe'] },
+        { id: 'Positron',      label: 'Positron',      bg: 'linear-gradient(180deg,#f3f5f7,#e3e8ed)', roads: ['#888','#bbb','#888'] },
+        { id: 'Dark Matter',   label: 'Dark Matter',   bg: 'radial-gradient(circle,#18222e,#0b1014)', roads: ['#22d3a3','#9ec5fe','#5b6573'] },
+        { id: 'OpenStreetMap', label: 'OpenStreetMap', bg: 'linear-gradient(180deg,#f2efe9,#e8e4db)', roads: ['#e07020','#dcdcdc','#888'] },
+        { id: 'Satellite',     label: 'Satellite',     bg: 'linear-gradient(140deg,#2d3823,#4a3a2a,#2a2820)', roads: ['#ffe8a0','#ffd84d','#fffdf2'] },
+      ];
+      let activeLayer = null;
+      if (baseLayers && map) {
+        Object.entries(baseLayers).forEach(([name, layer]) => { if (map.hasLayer(layer)) activeLayer = name; });
+      }
+      layerDefs.forEach(l => {
+        const card = document.createElement('div');
+        card.className = 'mob-layer-card' + (activeLayer === l.id ? ' active' : '');
+        card.innerHTML = `
+          <div class="mob-layer-preview" style="background:${l.bg}">
+            <svg viewBox="0 0 80 40" style="position:absolute;inset:0;width:100%;height:100%">
+              <path d="M0 20 Q 20 12 40 22 T 80 18" stroke="${l.roads[0]}" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+              <path d="M15 0 L 30 40" stroke="${l.roads[1]}" stroke-width="2" fill="none" stroke-linecap="round"/>
+              <path d="M50 5 L 65 38" stroke="${l.roads[2]}" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <div class="mob-layer-label">${l.label}</div>`;
+        card.addEventListener('click', () => {
+          if (baseLayers && map) {
+            Object.values(baseLayers).forEach(layer => { if (map.hasLayer(layer)) map.removeLayer(layer); });
+            baseLayers[l.id]?.addTo(map);
+          }
+          closeAllMobPopovers();
+          buildMobLayersPopover();
+        });
+        grid.appendChild(card);
+      });
+    }
+
+    // ── H3 sync ───────────────────────────────────────────────────────────────
+    function syncMobH3() {
+      const checked = document.getElementById('h3-toggle').checked;
+      const opVal   = document.getElementById('h3-opacity').value;
+      ['mob-h3-switch','mob-h3-switch-tab'].forEach(id => {
+        document.getElementById(id)?.classList.toggle('on', checked);
+      });
+      document.getElementById('mob-h3-opval')?.textContent != null &&
+        (document.getElementById('mob-h3-opval').textContent = opVal + '%');
+      document.getElementById('mob-h3-opval-tab')?.textContent != null &&
+        (document.getElementById('mob-h3-opval-tab').textContent = opVal + '%');
+      ['mob-h3-opacity','mob-h3-opacity-tab'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = opVal;
+      });
+    }
+
+    function buildMobH3ResBtns() {
+      const sorted = Array.from(h3Resolutions).sort((a,b) => a-b);
+      ['mob-h3-res-btns','mob-h3-res-btns-tab'].forEach(cid => {
+        const c = document.getElementById(cid);
+        if (!c) return;
+        c.innerHTML = '';
+        sorted.forEach(res => {
+          const btn = document.createElement('button');
+          btn.className = 'mob-h3-res-btn' + (enabledH3Resolutions.has(res) ? ' active' : '');
+          btn.textContent = `r${res}`;
+          btn.addEventListener('click', () => {
+            if (enabledH3Resolutions.has(res)) {
+              if (enabledH3Resolutions.size === 1) return;
+              enabledH3Resolutions.delete(res);
+            } else {
+              enabledH3Resolutions.add(res);
+            }
+            const desktopBtn = document.getElementById(`h3-res-${res}`);
+            if (desktopBtn) desktopBtn.className = enabledH3Resolutions.has(res)
+              ? 'px-2 py-1 text-xs font-semibold rounded bg-blue-600 text-white hover:bg-blue-500 transition duration-150'
+              : 'px-2 py-1 text-xs font-semibold rounded bg-slate-800 text-gray-400 hover:bg-slate-700 transition duration-150';
+            renderH3Layer();
+            buildMobH3ResBtns();
+          });
+          c.appendChild(btn);
+        });
+      });
+    }
+
+    ['mob-h3-switch','mob-h3-switch-tab'].forEach(id => {
+      document.getElementById(id)?.addEventListener('click', () => {
+        const t = document.getElementById('h3-toggle');
+        t.checked = !t.checked;
+        t.dispatchEvent(new Event('change'));
+        syncMobH3();
+      });
+    });
+    ['mob-h3-opacity','mob-h3-opacity-tab'].forEach(id => {
+      document.getElementById(id)?.addEventListener('input', e => {
+        document.getElementById('h3-opacity').value = e.target.value;
+        document.getElementById('h3-opacity').dispatchEvent(new Event('input'));
+        syncMobH3();
+      });
+    });
+
+    // ── Selection peek sync ───────────────────────────────────────────────────
+    function syncMobilePeek() {
+      const count = selectedEdges.size;
+      let totalM = 0;
+      selectedEdges.forEach(p => { totalM += p.length_m; });
+      const km = (totalM / 1000).toFixed(2);
+      document.getElementById('mob-peek-count').textContent =
+        count === 0 ? '0 segments · 0.00 km' : `${count} segment${count > 1 ? 's' : ''} · ${km} km`;
+      document.getElementById('mob-btn-clear-sel')?.classList.toggle('mob-hidden', count === 0);
+      document.getElementById('mob-btn-save-sel')?.classList.toggle('mob-disabled', count === 0);
+      const mdBtn = document.getElementById('mob-btn-save-md');
+      if (mdBtn) mdBtn.disabled = count === 0;
+      document.getElementById('mob-export-geojson')?.classList.toggle('disabled', count === 0);
+      document.getElementById('mob-export-csv')?.classList.toggle('disabled', count === 0);
+      const sub = document.getElementById('mob-geojson-sub');
+      if (sub) sub.textContent = count === 0 ? 'Select segments first' : `${count} features · ${km} km`;
+    }
+
+    function syncMobileSelectionTab() {
+      const panel = document.getElementById('mob-tab-selection');
+      if (!panel) return;
+      panel.innerHTML = '';
+      if (selectedEdges.size === 0) {
+        panel.innerHTML = '<p style="text-align:center;padding:32px 0;color:var(--text-dim);font-size:14px">Tap road segments on the map</p>';
+        return;
+      }
+      selectedEdges.forEach((props, edge_id) => {
+        const color = roadColors[props.highway] || roadColors.default;
+        const div = document.createElement('div');
+        div.className = 'mob-seg-chip';
+        div.innerHTML = `
+          <div class="mob-seg-bar" style="background:${color}"></div>
+          <div class="mob-seg-info">
+            <div class="mob-seg-name">${props.name}</div>
+            <div class="mob-seg-meta">${props.highway} · ${props.length_m}m</div>
+          </div>
+          <button class="mob-seg-remove">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
+          </button>`;
+        div.querySelector('.mob-seg-remove').addEventListener('click', () => removeSelection(edge_id));
+        panel.appendChild(div);
+      });
+    }
+
+    // ── Mobile road filters ───────────────────────────────────────────────────
+    function buildMobileRoadFilters() {
+      const container = document.getElementById('mob-road-filters');
+      if (!container) return;
+      container.innerHTML = '';
+      Array.from(highwayCategories).sort().forEach(cat => {
+        const color = roadColors[cat] || roadColors.default;
+        const isActive = enabledCategories.has(cat);
+        const row = document.createElement('div');
+        row.className = 'mob-filter-row' + (isActive ? ' active' : '');
+        row.innerHTML = `
+          <span class="mob-filter-dot" style="background:${color}"></span>
+          <span class="mob-filter-label">${cat.replace(/_/g,' ')}</span>
+          <div class="mob-checkbox">
+            <svg class="mob-checkbox-check" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="#04140d" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>
+          </div>`;
+        row.addEventListener('click', () => {
+          if (enabledCategories.has(cat)) {
+            enabledCategories.delete(cat);
+            row.classList.remove('active');
+            const d = document.getElementById(`filter-${cat}`);
+            if (d) d.checked = false;
+          } else {
+            enabledCategories.add(cat);
+            row.classList.add('active');
+            const d = document.getElementById(`filter-${cat}`);
+            if (d) d.checked = true;
+          }
+          renderRoadsLayer();
+        });
+        container.appendChild(row);
+      });
+    }
+
+    // ── Mobile saved tab ──────────────────────────────────────────────────────
+    async function buildMobileSavedCards() {
+      const mobPanel = document.getElementById('mob-tab-saved');
+      if (!mobPanel || !selectedDb || !mdConn) return;
+      try {
+        const rows = await mdQuery(`
+          SELECT m.selection_id, m.description, m.saved_at, COUNT(s.edge_id) AS edge_count
+          FROM ${selectedDb}.main.saved_selections_meta m
+          LEFT JOIN ${selectedDb}.main.saved_selections s ON m.selection_id = s.selection_id
+          GROUP BY m.selection_id, m.description, m.saved_at ORDER BY m.saved_at DESC
+        `);
+        mobPanel.innerHTML = '';
+        if (!rows.length) {
+          mobPanel.innerHTML = '<p style="text-align:center;padding:24px 0;color:var(--text-dim);font-size:14px">No saved selections in MotherDuck</p>';
+          return;
+        }
+        rows.forEach(sel => {
+          const ts = String(sel.saved_at).replace('T',' ').substring(0,16);
+          const card = document.createElement('div');
+          card.className = 'mob-saved-card';
+          card.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+              <div class="mob-saved-name">${sel.selection_id}</div>
+              <div class="mob-saved-date">${ts}</div>
+            </div>
+            <div class="mob-saved-note">${sel.description || 'No note provided'}</div>
+            <div class="mob-saved-meta">${sel.edge_count} segments</div>
+            <div class="mob-saved-actions">
+              <button class="mob-saved-load mob-act-load">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" width="13" height="13"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"/></svg>
+                Load
+              </button>
+              <button class="mob-saved-action-btn mob-act-del" title="Delete">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" width="13" height="13"><path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+              </button>
+            </div>`;
+          card.querySelector('.mob-act-load').addEventListener('click', () => {
+            loadSavedIntoActive(sel.selection_id);
+            mobFireToast('Loaded into workspace');
+          });
+          card.querySelector('.mob-act-del').addEventListener('click', () =>
+            deleteSavedSelection(sel.selection_id)
+          );
+          mobPanel.appendChild(card);
+        });
+      } catch (e) { console.warn('Mobile saved tab error:', e); }
+    }
+
+    // ── Area pill ─────────────────────────────────────────────────────────────
+    function updateMobileAreaPill(dbName) {
+      const nameEl = document.getElementById('mob-area-name');
+      const liveEl = document.getElementById('mob-live-dot');
+      if (nameEl) nameEl.textContent = dbName.charAt(0).toUpperCase() + dbName.slice(1);
+      if (liveEl) liveEl.style.display = 'flex';
+    }
+
+    document.getElementById('mob-area-btn')?.addEventListener('click', e => {
+      e.stopPropagation();
+      const existing = document.getElementById('mob-area-picker');
+      if (existing) { existing.remove(); return; }
+      const sel = document.getElementById('db-select');
+      if (!sel || sel.options.length <= 1) return;
+      const picker = document.createElement('div');
+      picker.id = 'mob-area-picker';
+      picker.style.cssText = `position:absolute;top:68px;left:12px;right:12px;background:var(--panel);
+        backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid var(--border);
+        border-radius:14px;padding:8px;z-index:950;pointer-events:auto;box-shadow:0 8px 24px rgba(0,0,0,0.3)`;
+      Array.from(sel.options).filter(o => o.value).forEach(opt => {
+        const btn = document.createElement('button');
+        btn.className = 'mob-pop-item' + (opt.value === selectedDb ? ' active' : '');
+        btn.innerHTML = `<span class="mob-pop-dot"></span>${opt.textContent}`;
+        btn.addEventListener('click', () => {
+          sel.value = opt.value;
+          sel.dispatchEvent(new Event('change'));
+          picker.remove();
+        });
+        picker.appendChild(btn);
+      });
+      document.getElementById('mobile-chrome').appendChild(picker);
+    });
+
+    // ── Mobile theme toggle ───────────────────────────────────────────────────
+    document.getElementById('mob-btn-theme-top')?.addEventListener('click', () => {
+      applyTheme(document.body.classList.contains('dark-mode') ? 'light' : 'dark');
+    });
+
+    // ── Save sel → open export tab ────────────────────────────────────────────
+    document.getElementById('mob-btn-save-sel')?.addEventListener('click', () => {
+      mobSetSnap('full');
+      document.querySelectorAll('.mob-tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.mob-tab-panel').forEach(p => p.classList.remove('active'));
+      document.querySelector('.mob-tab[data-tab="export"]')?.classList.add('active');
+      document.getElementById('mob-tab-export')?.classList.add('active');
+    });
+
+    document.getElementById('mob-btn-clear-sel')?.addEventListener('click', () => {
+      selectedEdges.clear();
+      updateSidebarSelections();
+      renderRoadsLayer();
+    });
+
+    // ── Mobile save to MotherDuck ─────────────────────────────────────────────
+    document.getElementById('mob-btn-save-md')?.addEventListener('click', async () => {
+      const name = (document.getElementById('mob-save-name').value.trim() ||
+        `Set - ${new Date().toISOString().replace('T',' ').substring(0,19)}`);
+      const note = document.getElementById('mob-save-note').value.trim();
+      const edgeIds = Array.from(selectedEdges.keys());
+      showLoading('Saving', `Writing "${name}" to MotherDuck...`);
+      try {
+        await ensureSelectionTables();
+        const esc = s => s.replace(/'/g,"''");
+        await mdQuery(`DELETE FROM ${selectedDb}.main.saved_selections WHERE selection_id = '${esc(name)}'`);
+        await mdQuery(`DELETE FROM ${selectedDb}.main.saved_selections_meta WHERE selection_id = '${esc(name)}'`);
+        await mdQuery(`INSERT INTO ${selectedDb}.main.saved_selections_meta VALUES ('${esc(name)}', '${esc(note)}', NOW())`);
+        if (edgeIds.length > 0) {
+          await mdQuery(`INSERT INTO ${selectedDb}.main.saved_selections VALUES ${edgeIds.map(id => `('${esc(name)}', ${id})`).join(',')}`);
+        }
+        document.getElementById('mob-save-name').value = '';
+        document.getElementById('mob-save-note').value = '';
+        await loadSavedSelections();
+        hideLoading();
+        mobFireToast(`Saved "${name}"`);
+      } catch (e) {
+        showLoading('Error', 'Failed to save: ' + e.message, true);
+      }
+    });
+
+    document.getElementById('mob-export-geojson')?.addEventListener('click', () => {
+      if (selectedEdges.size) { exportGeoJSON(); mobFireToast('Exported GeoJSON'); }
+    });
+    document.getElementById('mob-export-csv')?.addEventListener('click', () => {
+      if (selectedEdges.size) { exportCSV(); mobFireToast('Exported CSV'); }
+    });
+
+    // ── Toast ─────────────────────────────────────────────────────────────────
+    let _mobToastTimer = null;
+    function mobFireToast(msg) {
+      const toast = document.getElementById('mob-toast');
+      const text  = document.getElementById('mob-toast-text');
+      if (!toast || !text) return;
+      text.textContent = msg;
+      toast.classList.remove('hidden');
+      clearTimeout(_mobToastTimer);
+      _mobToastTimer = setTimeout(() => toast.classList.add('hidden'), 2200);
+    }
+
+    // ── db-select change → update area pill ───────────────────────────────────
+    document.getElementById('db-select').addEventListener('change', e => {
+      updateMobileAreaPill(e.target.value);
+    });
+
+    // ── theme-select change → rebuild style popover ───────────────────────────
+    document.getElementById('theme-select').addEventListener('change', () => {
+      buildMobStylePopover();
+      buildMobHistoryPopover();
+    });
+
+    // ── Sync H3 desktop controls → mobile ─────────────────────────────────────
+    document.getElementById('h3-toggle')?.addEventListener('change', syncMobH3);
+    document.getElementById('h3-opacity')?.addEventListener('input', syncMobH3);
 
 
     // ── Startup ───────────────────────────────────────────────────────────────
