@@ -49,9 +49,51 @@
       animation: spin 1s linear infinite;
     }
     @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+    /* ── Light theme ──────────────────────────────────────────────────────── */
+    .light-mode { background-color: #f1f5f9; color: #1e293b; }
+    .light-mode #map { background-color: #e8edf2; }
+    .light-mode .glass-panel {
+      background: rgba(255,255,255,0.88) !important;
+      border: 1px solid rgba(0,0,0,0.08) !important;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.10) !important;
+    }
+    .light-mode ::-webkit-scrollbar-track { background: #f1f5f9; }
+    .light-mode ::-webkit-scrollbar-thumb { background: #94a3b8; }
+    .light-mode .leaflet-tooltip {
+      background: rgba(255,255,255,0.95) !important;
+      border: 1px solid rgba(0,0,0,0.12) !important;
+      color: #1e293b !important;
+    }
+    .light-mode .leaflet-control-layers {
+      background: rgba(255,255,255,0.92) !important;
+      border: 1px solid rgba(0,0,0,0.10) !important;
+    }
+    .light-mode .leaflet-control-layers label { color: #334155 !important; }
+    .light-mode .leaflet-control-zoom a { background: rgba(255,255,255,0.9) !important; color: #334155 !important; border-color: #e2e8f0 !important; }
+    /* Tailwind overrides */
+    .light-mode .border-gray-800 { border-color: #e2e8f0 !important; }
+    .light-mode .border-gray-700 { border-color: #cbd5e1 !important; }
+    .light-mode .bg-slate-950\/95 { background-color: rgba(248,250,252,0.97) !important; }
+    .light-mode .bg-slate-950\/80 { background-color: rgba(241,245,249,0.88) !important; }
+    .light-mode .bg-slate-900    { background-color: #f1f5f9 !important; }
+    .light-mode .bg-slate-900\/80 { background-color: rgba(241,245,249,0.85) !important; }
+    .light-mode .bg-slate-900\/60 { background-color: rgba(241,245,249,0.65) !important; }
+    .light-mode .bg-slate-900\/50 { background-color: rgba(241,245,249,0.55) !important; }
+    .light-mode .bg-slate-800    { background-color: #e2e8f0 !important; }
+    .light-mode .bg-slate-800\/50 { background-color: rgba(226,232,240,0.55) !important; }
+    .light-mode .hover\:bg-slate-900:hover { background-color: #e8edf4 !important; }
+    .light-mode .hover\:bg-slate-700:hover { background-color: #dde3ec !important; }
+    .light-mode .text-white   { color: #1e293b !important; }
+    .light-mode .text-gray-100 { color: #1e293b !important; }
+    .light-mode .text-gray-200 { color: #334155 !important; }
+    .light-mode .text-gray-300 { color: #475569 !important; }
+    .light-mode .text-gray-400 { color: #64748b !important; }
+    .light-mode .text-gray-500 { color: #94a3b8 !important; }
+    .light-mode .text-gray-600 { color: #94a3b8 !important; }
   </style>
 </head>
-<body class="overflow-hidden h-screen w-screen flex">
+<body class="overflow-hidden h-screen w-screen flex light-mode">
 
   <!-- ── Token Auth Overlay ───────────────────────────────────────────────── -->
   <div id="token-overlay" class="hidden fixed inset-0 bg-slate-950/95 backdrop-blur-sm z-[99999] flex items-center justify-center">
@@ -110,7 +152,17 @@
           <div class="w-3 h-3 bg-blue-500 rounded-full animate-pulse"></div>
           <h1 class="text-xl font-bold tracking-tight text-white">Sensor Selector</h1>
         </div>
-        <span id="connection-status" class="text-xs text-gray-500 font-medium">Disconnected</span>
+        <div class="flex items-center space-x-2">
+          <span id="connection-status" class="text-xs text-gray-500 font-medium">Disconnected</span>
+          <button id="btn-theme" title="Toggle light/dark theme" class="p-1.5 rounded-lg hover:bg-slate-800 text-gray-400 hover:text-gray-200 transition">
+            <svg id="icon-moon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21.752 15.002A9.72 9.72 0 0 1 18 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 0 0 3 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 0 0 9.002-5.998Z" />
+            </svg>
+            <svg id="icon-sun" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4 hidden">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386-1.591 1.591M21 12h-2.25m-.386 6.364-1.591-1.591M12 18.75V21m-4.773-4.227-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0Z" />
+            </svg>
+          </button>
+        </div>
       </div>
       <p class="text-xs text-gray-400 pl-6">MotherDuck Cloud Edition</p>
     </div>
@@ -289,6 +341,7 @@
     let googleRunId = 'latest';
     let tomtomRunId = 'latest';
     let savedSelectionLayers = new Map();
+    let baseLayers = null;
 
     const roadColors = {
       motorway: '#ff3b30', trunk: '#ff9500', primary: '#ffcc00',
@@ -299,6 +352,18 @@
       low: '#10b981', moderate: '#eab308', heavy: '#f97316',
       severe: '#ef4444', 'no data': '#4b5563'
     };
+
+    // ── Theme ─────────────────────────────────────────────────────────────────
+    const THEME_KEY = 'app_theme';
+
+    function applyTheme(theme) {
+      const isDark = theme === 'dark';
+      document.body.classList.toggle('dark-mode',  isDark);
+      document.body.classList.toggle('light-mode', !isDark);
+      document.getElementById('icon-sun').classList.toggle('hidden',  isDark);
+      document.getElementById('icon-moon').classList.toggle('hidden', !isDark);
+      localStorage.setItem(THEME_KEY, theme);
+    }
 
     // ── Token Management ──────────────────────────────────────────────────────
     const getSavedToken = () => localStorage.getItem(TOKEN_KEY);
@@ -354,14 +419,15 @@
       if (map) return;
       map = L.map('map', { zoomControl: false, attributionControl: false }).setView([59.35, 18.0], 13);
 
-      const baseLayers = {
-        'Dark Matter': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
-        'Voyager':     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
-        'Positron':    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
+      baseLayers = {
+        'Voyager':       L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
+        'Positron':      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
+        'Dark Matter':   L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
         'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }),
-        'Satellite':   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
+        'Satellite':     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
       };
-      baseLayers['Dark Matter'].addTo(map);
+      const isDark = document.body.classList.contains('dark-mode');
+      (isDark ? baseLayers['Dark Matter'] : baseLayers['Voyager']).addTo(map);
       L.control.layers(baseLayers, {}, { position: 'bottomright', collapsed: true }).addTo(map);
       L.control.zoom({ position: 'bottomright' }).addTo(map);
     }
@@ -1115,6 +1181,10 @@
       }
     });
 
+    document.getElementById('btn-theme').addEventListener('click', () => {
+      applyTheme(document.body.classList.contains('dark-mode') ? 'light' : 'dark');
+    });
+
     document.getElementById('btn-connect').addEventListener('click', () => {
       const token = document.getElementById('token-input').value.trim();
       if (!token) { document.getElementById('token-error').textContent = 'Please enter a token.'; document.getElementById('token-error').classList.remove('hidden'); return; }
@@ -1137,6 +1207,8 @@
 
     // ── Startup ───────────────────────────────────────────────────────────────
     window.addEventListener('load', async () => {
+      applyTheme(localStorage.getItem(THEME_KEY) || 'light');
+
       // ?token= in URL lets you share a direct link; saves to localStorage on first use
       const urlToken = new URLSearchParams(window.location.search).get('token');
       // %%MOTHERDUCK_TOKEN%% is replaced by GitHub Actions at deploy time (see .github/workflows/pages.yml)
