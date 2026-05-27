@@ -300,11 +300,20 @@
     async function mdQuery(sql) {
       const result = await mdConn.evaluateQuery(sql);
       const rows = result.data.toRows();
-      // Normalize BigInt → Number for safe JS use
+      const pad = n => String(n).padStart(2, '0');
       return rows.map(row => {
         const out = {};
         for (const [k, v] of Object.entries(row)) {
-          out[k] = typeof v === 'bigint' ? Number(v) : v;
+          if (typeof v === 'bigint') {
+            out[k] = Number(v);
+          } else if (v instanceof Date) {
+            // DuckDB TIMESTAMP (no timezone) comes back as a JS Date interpreted in
+            // the browser's local timezone. Use local-time getters to recover the
+            // original stored string (which is UTC) without the offset shift.
+            out[k] = `${v.getFullYear()}-${pad(v.getMonth()+1)}-${pad(v.getDate())} ${pad(v.getHours())}:${pad(v.getMinutes())}:${pad(v.getSeconds())}`;
+          } else {
+            out[k] = v;
+          }
         }
         return out;
       });
