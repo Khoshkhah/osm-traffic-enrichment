@@ -1280,7 +1280,13 @@
       }).addTo(map);
       selFillLayer = L.geoJSON(selGeoJSON, {
         ...paneOpt,
-        style: f => ({ color: '#EE00FF', weight: getRoadWeight(f.properties.highway) * 1.5, opacity: 1.0, lineCap: 'round', lineJoin: 'round' })
+        style: f => ({ color: '#EE00FF', weight: getRoadWeight(f.properties.highway) * 1.5, opacity: 1.0, lineCap: 'round', lineJoin: 'round' }),
+        onEachFeature(feature, layer) {
+          layer.on('click', () => {
+            selectedEdges.delete(feature.properties.edge_id);
+            updateSidebarSelections();
+          });
+        }
       }).addTo(map);
     }
 
