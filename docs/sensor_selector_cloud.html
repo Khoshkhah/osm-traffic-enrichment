@@ -525,9 +525,7 @@
           allRuns = runsRows.map(r => ({
             run_id: r.run_id,
             source: r.source,
-            fetched_at: r.fetched_at instanceof Date
-              ? r.fetched_at.toISOString()
-              : String(r.fetched_at)
+            fetched_at: String(r.fetched_at).substring(0, 19)
           }));
         } catch (e) {
           console.warn('No runs table:', e.message);
@@ -787,8 +785,7 @@
       sourceRuns.forEach(run => {
         const opt = document.createElement('option');
         opt.value = run.run_id;
-        let ts = run.fetched_at;
-        try { ts = new Date(run.fetched_at).toISOString().replace('T',' ').substring(0,16); } catch {}
+        let ts = String(run.fetched_at).replace('T', ' ').substring(0, 16);
         opt.textContent = `Run #${run.run_id} (${ts})`;
         select.appendChild(opt);
       });
@@ -823,7 +820,7 @@
 
         rows.forEach(sel => {
           let ts = sel.saved_at;
-          try { ts = new Date(sel.saved_at).toISOString().replace('T',' ').substring(0,16); } catch {}
+          ts = String(sel.saved_at).replace('T', ' ').substring(0, 16);
 
           const div = document.createElement('div');
           div.className = 'group flex flex-col p-2 bg-slate-900/60 hover:bg-slate-900 rounded border border-gray-800 hover:border-gray-700 transition cursor-pointer relative';
