@@ -850,10 +850,26 @@
     let baseLayers = null;
 
     const roadColors = {
-      motorway: '#ff3b30', trunk: '#ff9500', primary: '#ffcc00',
-      secondary: '#34c759', tertiary: '#5ac8fa', residential: '#af52de',
-      service: '#8e8e93', default: '#555555'
+      motorway:       '#e892a2', motorway_link:  '#e892a2',
+      trunk:          '#f9b29c', trunk_link:     '#f9b29c',
+      primary:        '#fcd6a4', primary_link:   '#fcd6a4',
+      secondary:      '#f7fabf', secondary_link: '#f7fabf',
+      tertiary:       '#ffffff', tertiary_link:  '#ffffff',
+      unclassified:   '#ffffff', residential:    '#ffffff',
+      living_street:  '#ededed', service:        '#ffffff',
+      track:          '#9e7b54', pedestrian:     '#ededed',
+      footway:        '#9e5b5b', cycleway:       '#5c7cb6',
+      path:           '#9e5b5b', default:        '#aaaaaa'
     };
+
+    function getRoadWeight(hw) {
+      if (['motorway','motorway_link'].includes(hw))                              return 4.5;
+      if (['trunk','trunk_link'].includes(hw))                                    return 3.5;
+      if (['primary','primary_link'].includes(hw))                                return 3.0;
+      if (['secondary','secondary_link'].includes(hw))                            return 2.5;
+      if (['tertiary','tertiary_link','unclassified','residential'].includes(hw)) return 2.0;
+      return 1.5;
+    }
     const congestionColors = {
       low: '#10b981', moderate: '#eab308', heavy: '#f97316',
       severe: '#ef4444', 'no data': '#4b5563'
@@ -1185,7 +1201,7 @@
 
       return {
         color: baseColor,
-        weight: ['motorway','trunk','primary'].includes(props.highway) ? 3.5 : 2.0,
+        weight: getRoadWeight(props.highway),
         opacity,
         lineCap: 'round',
         lineJoin: 'round'
@@ -1290,7 +1306,7 @@
         div.className = 'flex items-center justify-between text-xs p-1 hover:bg-slate-900 rounded';
         div.innerHTML = `
           <div class="flex items-center space-x-2">
-            <span class="w-2.5 h-2.5 rounded-full inline-block" style="background-color:${color}"></span>
+            <span class="w-2.5 h-2.5 rounded-full inline-block" style="background-color:${color};box-shadow:0 0 0 1.5px rgba(0,0,0,0.18)"></span>
             <span class="text-gray-300 font-medium capitalize">${cat.replace(/_/g,' ')}</span>
           </div>
           <input type="checkbox" checked id="filter-${cat}" class="w-3.5 h-3.5 rounded bg-slate-900 border-gray-800 text-blue-500 cursor-pointer">
@@ -1366,7 +1382,7 @@
           <div class="flex flex-col pr-2 truncate">
             <span class="font-semibold text-white truncate">${props.name}</span>
             <div class="flex items-center flex-wrap gap-x-1.5 mt-0.5 text-[10px] text-gray-400">
-              <span class="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0" style="background-color:${color}"></span>
+              <span class="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0" style="background-color:${color};box-shadow:0 0 0 1.5px rgba(0,0,0,0.18)"></span>
               <span class="capitalize">${props.highway}</span>
               <span>&middot;</span>
               <span>${props.length_m} m</span>
@@ -2059,7 +2075,7 @@
         const div = document.createElement('div');
         div.className = 'mob-seg-chip';
         div.innerHTML = `
-          <div class="mob-seg-bar" style="background:${color}"></div>
+          <div class="mob-seg-bar" style="background:${color};box-shadow:0 0 0 1.5px rgba(0,0,0,0.18)"></div>
           <div class="mob-seg-info">
             <div class="mob-seg-name">${props.name}</div>
             <div class="mob-seg-meta">${props.highway} · ${props.length_m} m${props.lanes ? ' · ' + props.lanes + ' lane' + (props.lanes > 1 ? 's' : '') : ''}${props.oneway === 'yes' ? ' · one-way' : ''}${props.maxspeed_kmh ? ' · ' + Math.round(props.maxspeed_kmh) + ' km/h' : ''}</div>
@@ -2083,7 +2099,7 @@
         const row = document.createElement('div');
         row.className = 'mob-filter-row' + (isActive ? ' active' : '');
         row.innerHTML = `
-          <span class="mob-filter-dot" style="background:${color}"></span>
+          <span class="mob-filter-dot" style="background:${color};box-shadow:0 0 0 1.5px rgba(0,0,0,0.18)"></span>
           <span class="mob-filter-label">${cat.replace(/_/g,' ')}</span>
           <div class="mob-checkbox">
             <svg class="mob-checkbox-check" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="#04140d" width="14" height="14"><path stroke-linecap="round" stroke-linejoin="round" d="M20 6L9 17l-5-5"/></svg>
