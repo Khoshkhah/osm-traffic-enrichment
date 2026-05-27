@@ -32,6 +32,15 @@
       font-size: 12px !important;
       font-weight: 500 !important;
     }
+    .leaflet-control-layers {
+      background: rgba(15, 23, 42, 0.85) !important;
+      border: 1px solid rgba(255,255,255,0.1) !important;
+      border-radius: 8px !important;
+      color: #e2e8f0 !important;
+      backdrop-filter: blur(8px);
+    }
+    .leaflet-control-layers label { color: #cbd5e1 !important; font-size: 12px; }
+    .leaflet-control-layers-toggle { background-color: rgba(15,23,42,0.85) !important; }
     .spinner {
       border: 3px solid rgba(255,255,255,0.1);
       width: 36px; height: 36px;
@@ -344,7 +353,16 @@
     function initMap() {
       if (map) return;
       map = L.map('map', { zoomControl: false, attributionControl: false }).setView([59.35, 18.0], 13);
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }).addTo(map);
+
+      const baseLayers = {
+        'Dark Matter': L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
+        'Voyager':     L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
+        'Positron':    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
+        'OpenStreetMap': L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }),
+        'Satellite':   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
+      };
+      baseLayers['Dark Matter'].addTo(map);
+      L.control.layers(baseLayers, {}, { position: 'bottomright', collapsed: true }).addTo(map);
       L.control.zoom({ position: 'bottomright' }).addTo(map);
     }
 
