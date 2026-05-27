@@ -556,6 +556,18 @@
         </select>
       </div>
 
+      <!-- Map Base Layer -->
+      <div>
+        <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Map Base Layer</label>
+        <select id="base-layer-select" class="w-full bg-slate-900 border border-gray-800 text-gray-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+          <option value="Voyager" selected>Voyager</option>
+          <option value="Positron">Positron (Light)</option>
+          <option value="Dark Matter">Dark Matter</option>
+          <option value="OpenStreetMap">OpenStreetMap</option>
+          <option value="Satellite">Satellite</option>
+        </select>
+      </div>
+
       <!-- Historical Traffic Run Selector -->
       <div id="traffic-run-container" class="hidden">
         <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Traffic History Run</label>
@@ -939,9 +951,18 @@
         'Satellite':     L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 }),
       };
       const isDark = document.body.classList.contains('dark-mode');
-      (isDark ? baseLayers['Dark Matter'] : baseLayers['Voyager']).addTo(map);
-      L.control.layers(baseLayers, {}, { position: 'bottomright', collapsed: true }).addTo(map);
+      const defaultLayer = isDark ? 'Dark Matter' : 'Voyager';
+      baseLayers[defaultLayer].addTo(map);
+      document.getElementById('base-layer-select').value = defaultLayer;
       L.control.zoom({ position: 'bottomright' }).addTo(map);
+    }
+
+    function switchBaseLayer(name) {
+      if (!baseLayers || !map) return;
+      Object.values(baseLayers).forEach(l => { if (map.hasLayer(l)) map.removeLayer(l); });
+      baseLayers[name]?.addTo(map);
+      document.getElementById('base-layer-select').value = name;
+      buildMobLayersPopover?.();
     }
 
     // ── Connect with token ────────────────────────────────────────────────────
@@ -1632,6 +1653,10 @@
       loadAreaData(selectedDb);
     });
 
+    document.getElementById('base-layer-select').addEventListener('change', e => {
+      switchBaseLayer(e.target.value);
+    });
+
     document.getElementById('theme-select').addEventListener('change', e => {
       baseRoadsTheme = e.target.value;
       updateRunSelectorUI();
@@ -1930,12 +1955,8 @@
           </div>
           <div class="mob-layer-label">${l.label}</div>`;
         card.addEventListener('click', () => {
-          if (baseLayers && map) {
-            Object.values(baseLayers).forEach(layer => { if (map.hasLayer(layer)) map.removeLayer(layer); });
-            baseLayers[l.id]?.addTo(map);
-          }
+          switchBaseLayer(l.id);
           closeAllMobPopovers();
-          buildMobLayersPopover();
         });
         grid.appendChild(card);
       });
