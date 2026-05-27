@@ -864,13 +864,7 @@
         const opt = document.createElement('option');
         opt.value = run.run_id;
         
-        let formattedTime = run.fetched_at;
-        try {
-          const date = new Date(run.fetched_at);
-          if (!isNaN(date.getTime())) {
-            formattedTime = date.toISOString().replace('T', ' ').substring(0, 16);
-          }
-        } catch (e) {}
+        let formattedTime = String(run.fetched_at).replace('T', ' ').substring(0, 16);
         
         opt.textContent = `Run #${run.run_id} (${formattedTime})`;
         select.appendChild(opt);
@@ -950,13 +944,7 @@
           const div = document.createElement('div');
           div.className = 'group flex flex-col p-2 bg-slate-900/60 hover:bg-slate-900 rounded border border-gray-800 hover:border-gray-700 transition cursor-pointer relative';
           
-          let formattedTime = sel.saved_at;
-          try {
-            const date = new Date(sel.saved_at);
-            if (!isNaN(date.getTime())) {
-              formattedTime = date.toISOString().replace('T', ' ').substring(0, 16);
-            }
-          } catch (e) {}
+          let formattedTime = String(sel.saved_at).replace('T', ' ').substring(0, 16);
           
           div.innerHTML = `
             <div class="flex items-start justify-between">
