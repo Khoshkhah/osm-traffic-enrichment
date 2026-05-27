@@ -1365,11 +1365,14 @@
         div.innerHTML = `
           <div class="flex flex-col pr-2 truncate">
             <span class="font-semibold text-white truncate">${props.name}</span>
-            <div class="flex items-center space-x-1.5 mt-0.5 text-[10px] text-gray-400">
-              <span class="w-1.5 h-1.5 rounded-full inline-block" style="background-color:${color}"></span>
+            <div class="flex items-center flex-wrap gap-x-1.5 mt-0.5 text-[10px] text-gray-400">
+              <span class="w-1.5 h-1.5 rounded-full inline-block flex-shrink-0" style="background-color:${color}"></span>
               <span class="capitalize">${props.highway}</span>
               <span>&middot;</span>
-              <span>${props.length_m}m</span>
+              <span>${props.length_m} m</span>
+              ${props.lanes ? `<span>&middot;</span><span>${props.lanes} lane${props.lanes > 1 ? 's' : ''}</span>` : ''}
+              ${props.oneway === 'yes' ? `<span>&middot;</span><span>one-way</span>` : ''}
+              ${props.maxspeed_kmh ? `<span>&middot;</span><span>${Math.round(props.maxspeed_kmh)} km/h</span>` : ''}
             </div>
           </div>
           <button class="text-gray-400 hover:text-red-400 transition" onclick="removeSelection(${edge_id})">
@@ -1417,7 +1420,11 @@
     // ── Saved selections ──────────────────────────────────────────────────────
     async function ensureSelectionTables() {
       await mdQuery(`CREATE TABLE IF NOT EXISTS ${selectedDb}.main.saved_selections_meta (selection_id VARCHAR PRIMARY KEY, description VARCHAR, saved_at TIMESTAMP)`);
-      await mdQuery(`CREATE TABLE IF NOT EXISTS ${selectedDb}.main.saved_selections (selection_id VARCHAR, edge_id INTEGER, PRIMARY KEY (selection_id, edge_id))`);
+      await mdQuery(`CREATE TABLE IF NOT EXISTS ${selectedDb}.main.saved_selections (selection_id VARCHAR, edge_id INTEGER, lanes VARCHAR, oneway VARCHAR, maxspeed_kmh INTEGER, PRIMARY KEY (selection_id, edge_id))`);
+      // Add columns to pre-existing tables that lack them
+      for (const col of ['lanes VARCHAR', 'oneway VARCHAR', 'maxspeed_kmh INTEGER']) {
+        try { await mdQuery(`ALTER TABLE ${selectedDb}.main.saved_selections ADD COLUMN IF NOT EXISTS ${col}`); } catch {}
+      }
     }
 
     async function loadSavedSelections() {
@@ -1621,10 +1628,19 @@
 
     function exportCSV() {
       if (!selectedEdges.size) return;
-      const headers = ['edge_id','name','highway','length_m','wkt_geometry'];
+      const headers = ['edge_id','name','highway','length_m','lanes','oneway','maxspeed_kmh','wkt_geometry'];
       const rows = [];
       selectedEdges.forEach(item => {
-        rows.push([item.edge_id, `"${item.name.replace(/"/g,'""')}"`, item.highway, item.length_m, geojsonToWkt(item.geometry)]);
+        rows.push([
+          item.edge_id,
+          `"${item.name.replace(/"/g,'""')}"`,
+          item.highway,
+          item.length_m,
+          item.lanes ?? '',
+          item.oneway ?? '',
+          item.maxspeed_kmh != null ? Math.round(item.maxspeed_kmh) : '',
+          geojsonToWkt(item.geometry)
+        ]);
       });
       const csv = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
       const a = document.createElement('a');
@@ -1706,7 +1722,13 @@
         await mdQuery(`DELETE FROM ${selectedDb}.main.saved_selections_meta WHERE selection_id = '${escaped}'`);
         await mdQuery(`INSERT INTO ${selectedDb}.main.saved_selections_meta VALUES ('${escaped}', '${escapedNote}', NOW())`);
         if (edgeIds.length > 0) {
-          const values = edgeIds.map(id => `('${escaped}', ${id})`).join(',');
+          const values = edgeIds.map(id => {
+            const p = selectedEdges.get(id);
+            const lanes = p.lanes != null ? `'${String(p.lanes).replace(/'/g,"''")}'` : 'NULL';
+            const oneway = p.oneway != null ? `'${p.oneway}'` : 'NULL';
+            const speed = p.maxspeed_kmh != null ? Math.round(p.maxspeed_kmh) : 'NULL';
+            return `('${escaped}', ${id}, ${lanes}, ${oneway}, ${speed})`;
+          }).join(',');
           await mdQuery(`INSERT INTO ${selectedDb}.main.saved_selections VALUES ${values}`);
         }
         nameInput.value = '';
@@ -2040,7 +2062,7 @@
           <div class="mob-seg-bar" style="background:${color}"></div>
           <div class="mob-seg-info">
             <div class="mob-seg-name">${props.name}</div>
-            <div class="mob-seg-meta">${props.highway} · ${props.length_m}m</div>
+            <div class="mob-seg-meta">${props.highway} · ${props.length_m} m${props.lanes ? ' · ' + props.lanes + ' lane' + (props.lanes > 1 ? 's' : '') : ''}${props.oneway === 'yes' ? ' · one-way' : ''}${props.maxspeed_kmh ? ' · ' + Math.round(props.maxspeed_kmh) + ' km/h' : ''}</div>
           </div>
           <button class="mob-seg-remove">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>
@@ -2199,7 +2221,14 @@
         await mdQuery(`DELETE FROM ${selectedDb}.main.saved_selections_meta WHERE selection_id = '${esc(name)}'`);
         await mdQuery(`INSERT INTO ${selectedDb}.main.saved_selections_meta VALUES ('${esc(name)}', '${esc(note)}', NOW())`);
         if (edgeIds.length > 0) {
-          await mdQuery(`INSERT INTO ${selectedDb}.main.saved_selections VALUES ${edgeIds.map(id => `('${esc(name)}', ${id})`).join(',')}`);
+          const vals = edgeIds.map(id => {
+            const p = selectedEdges.get(id);
+            const lanes = p.lanes != null ? `'${String(p.lanes).replace(/'/g,"''")}'` : 'NULL';
+            const oneway = p.oneway != null ? `'${p.oneway}'` : 'NULL';
+            const speed = p.maxspeed_kmh != null ? Math.round(p.maxspeed_kmh) : 'NULL';
+            return `('${esc(name)}', ${id}, ${lanes}, ${oneway}, ${speed})`;
+          }).join(',');
+          await mdQuery(`INSERT INTO ${selectedDb}.main.saved_selections VALUES ${vals}`);
         }
         document.getElementById('mob-save-name').value = '';
         document.getElementById('mob-save-note').value = '';
