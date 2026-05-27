@@ -15,6 +15,7 @@
     ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: #475569; }
     #map { height: 100%; width: 100%; background-color: #0b0f19; }
+    #map.satellite-mode .leaflet-tile-pane { filter: saturate(0.80) brightness(0.90); }
     .glass-panel {
       background: rgba(15, 23, 42, 0.75);
       backdrop-filter: blur(12px);
@@ -834,6 +835,7 @@
     let h3CellsData = null;
     let boundaryData = null;
     let roadsLayer = null;
+    let roadsCasingLayer = null;
     let h3Layer = null;
     let boundaryLayer = null;
     let selectedEdges = new Map();
@@ -849,26 +851,53 @@
     let savedSelectionLayers = new Map();
     let baseLayers = null;
 
+    // High-saturation palette from docs/map_road_color.md
     const roadColors = {
-      motorway:       '#e892a2', motorway_link:  '#e892a2',
-      trunk:          '#f9b29c', trunk_link:     '#f9b29c',
-      primary:        '#fcd6a4', primary_link:   '#fcd6a4',
-      secondary:      '#f7fabf', secondary_link: '#f7fabf',
-      tertiary:       '#ffffff', tertiary_link:  '#ffffff',
-      unclassified:   '#ffffff', residential:    '#ffffff',
-      living_street:  '#ededed', service:        '#ffffff',
-      track:          '#9e7b54', pedestrian:     '#ededed',
-      footway:        '#9e5b5b', cycleway:       '#5c7cb6',
-      path:           '#9e5b5b', default:        '#aaaaaa'
+      motorway: '#00E5FF', motorway_link: '#00E5FF',
+      trunk:    '#FF007F', trunk_link:    '#FF007F',
+      primary:  '#FF9100', primary_link:  '#FF9100',
+      secondary:'#FFEA00', secondary_link:'#FFEA00',
+      tertiary: '#00E676', tertiary_link: '#00E676',
+      unclassified:'#FFFFFF', residential:'#FFFFFF',
+      living_street:'#DDDDDD', service:  '#A6A6A6',
+      track:    '#9e7b54', pedestrian:    '#DDDDDD',
+      footway:  '#C0392B', cycleway:      '#2980B9',
+      path:     '#C0392B', default:       '#AAAAAA'
+    };
+
+    // Casing colors for light base maps (from docs/map_road_color.md)
+    const roadCasingLight = {
+      motorway: '#007785', motorway_link: '#007785',
+      trunk:    '#9E004F', trunk_link:    '#9E004F',
+      primary:  '#A86000', primary_link:  '#A86000',
+      secondary:'#A39600', secondary_link:'#A39600',
+      tertiary: '#007A3E', tertiary_link: '#007A3E',
+      unclassified:'#999999', residential:'#999999',
+      default:  '#888888'
     };
 
     function getRoadWeight(hw) {
-      if (['motorway','motorway_link'].includes(hw))                              return 4.5;
-      if (['trunk','trunk_link'].includes(hw))                                    return 3.5;
-      if (['primary','primary_link'].includes(hw))                                return 3.0;
-      if (['secondary','secondary_link'].includes(hw))                            return 2.5;
-      if (['tertiary','tertiary_link','unclassified','residential'].includes(hw)) return 2.0;
+      if (['motorway','motorway_link'].includes(hw))   return 6.0;
+      if (['trunk','trunk_link'].includes(hw))         return 5.5;
+      if (['primary','primary_link'].includes(hw))     return 4.5;
+      if (['secondary','secondary_link'].includes(hw)) return 3.5;
+      if (['tertiary','tertiary_link'].includes(hw))   return 2.5;
+      if (['unclassified','residential'].includes(hw)) return 2.0;
+      if (hw === 'service')                            return 1.0;
       return 1.5;
+    }
+
+    function isDarkBaseLayer() {
+      if (!baseLayers || !map) return false;
+      return map.hasLayer(baseLayers['Dark Matter']) || map.hasLayer(baseLayers['Satellite']);
+    }
+
+    function getCasingStyle(feature) {
+      const hw = feature.properties.highway;
+      if (['mapbox','google','tomtom','gray','white'].includes(baseRoadsTheme)) return { opacity: 0, weight: 0 };
+      if (['footway','cycleway','path','track','pedestrian','service','living_street'].includes(hw)) return { opacity: 0, weight: 0 };
+      const casingColor = isDarkBaseLayer() ? '#000000' : (roadCasingLight[hw] || roadCasingLight.default);
+      return { color: casingColor, weight: getRoadWeight(hw) + 2, opacity: 0.75, lineCap: 'round', lineJoin: 'round' };
     }
     const congestionColors = {
       low: '#10b981', moderate: '#eab308', heavy: '#f97316',
@@ -964,6 +993,8 @@
       if (!baseLayers || !map) return;
       Object.values(baseLayers).forEach(l => { if (map.hasLayer(l)) map.removeLayer(l); });
       baseLayers[name]?.addTo(map);
+      document.getElementById('map').classList.toggle('satellite-mode', name === 'Satellite');
+      if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
       buildMobLayersPopover?.();
     }
 
@@ -1179,7 +1210,7 @@
     // ── Road styling ──────────────────────────────────────────────────────────
     function getRoadStyle(feature, isSelected = false) {
       if (isSelected) {
-        return { color: '#00f0ff', weight: 6, opacity: 1.0, lineCap: 'round', lineJoin: 'round' };
+        return { color: '#00f0ff', weight: getRoadWeight(feature.properties.highway) + 4, opacity: 1.0, lineCap: 'round', lineJoin: 'round' };
       }
       const props = feature.properties;
       let baseColor;
@@ -1191,7 +1222,7 @@
       else                                   baseColor = roadColors[props.highway] || roadColors.default;
 
       const isTrafficTheme = ['mapbox','google','tomtom'].includes(baseRoadsTheme);
-      let opacity = 0.7;
+      let opacity = 0.9;
       if (isTrafficTheme) {
         const key = baseRoadsTheme === 'mapbox' ? 'mb_congestion' : (baseRoadsTheme === 'google' ? 'gg_congestion' : 'tt_congestion');
         opacity = (props[key] || 'no data') === 'no data' ? 0.2 : 0.85;
@@ -1199,17 +1230,21 @@
         opacity = 0.45;
       }
 
+      const dashArray = ['footway','path'].includes(props.highway) ? '4 4' :
+                         props.highway === 'cycleway'               ? '6 4' : null;
       return {
         color: baseColor,
         weight: getRoadWeight(props.highway),
         opacity,
         lineCap: 'round',
-        lineJoin: 'round'
+        lineJoin: 'round',
+        ...(dashArray && { dashArray })
       };
     }
 
     // ── Render layers ─────────────────────────────────────────────────────────
     function renderData() {
+      if (roadsCasingLayer) { map.removeLayer(roadsCasingLayer); roadsCasingLayer = null; }
       if (roadsLayer)    map.removeLayer(roadsLayer);
       if (h3Layer)       map.removeLayer(h3Layer);
       if (boundaryLayer) map.removeLayer(boundaryLayer);
@@ -1253,8 +1288,12 @@
     }
 
     function renderRoadsLayer() {
+      if (roadsCasingLayer) { map.removeLayer(roadsCasingLayer); roadsCasingLayer = null; }
       if (roadsLayer) map.removeLayer(roadsLayer);
       const filtered = roadsData.features.filter(f => enabledCategories.has(f.properties.highway));
+      roadsCasingLayer = L.geoJSON({ type: 'FeatureCollection', features: filtered }, {
+        style: f => getCasingStyle(f)
+      }).addTo(map);
       roadsLayer = L.geoJSON({ type: 'FeatureCollection', features: filtered }, {
         style: f => getRoadStyle(f, selectedEdges.has(f.properties.edge_id)),
         onEachFeature(feature, layer) {
@@ -1675,6 +1714,7 @@
       baseRoadsTheme = e.target.value;
       updateRunSelectorUI();
       if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.has(f.properties.edge_id)));
+      if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
     });
 
     document.getElementById('run-select').addEventListener('change', async e => {
@@ -1893,6 +1933,7 @@
           document.getElementById('theme-select').value = t.id;
           updateRunSelectorUI();
           if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.has(f.properties.edge_id)));
+          if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
           closeAllMobPopovers();
         });
         pop.appendChild(btn);
