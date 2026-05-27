@@ -1033,7 +1033,10 @@
           e.edge_id,
           COALESCE(e.name, 'Unnamed Road') AS name,
           e.highway,
-          ROUND(e.length_m, 1) AS length_m,
+          CAST(ROUND(e.length_m) AS INTEGER) AS length_m,
+          e.lanes,
+          e.oneway,
+          e.maxspeed_kmh,
           ST_AsGeoJSON(e.geometry) AS geojson,
           COALESCE(m.congestion, 'no data') AS mb_congestion,
           COALESCE(g.congestion, 'no data') AS gg_congestion,
@@ -1056,6 +1059,9 @@
             name: row.name,
             highway: row.highway,
             length_m: row.length_m,
+            lanes: row.lanes,
+            oneway: row.oneway,
+            maxspeed_kmh: row.maxspeed_kmh,
             mb_congestion: row.mb_congestion,
             gg_congestion: row.gg_congestion,
             tt_congestion: row.tt_congestion
@@ -1230,12 +1236,16 @@
         style: f => getRoadStyle(f, selectedEdges.has(f.properties.edge_id)),
         onEachFeature(feature, layer) {
           const props = feature.properties;
-          layer.bindTooltip(`
-            <div>
+          layer.bindTooltip(() => {
+            const meta = [];
+            if (props.lanes) meta.push(`${props.lanes} lane${props.lanes > 1 ? 's' : ''}`);
+            if (props.oneway === 'yes') meta.push('one-way');
+            if (props.maxspeed_kmh) meta.push(`${Math.round(props.maxspeed_kmh)} km/h`);
+            return `<div>
               <div class="font-bold">${props.name}</div>
-              <div class="text-gray-400 text-xs mt-0.5">${props.highway.toUpperCase()} &middot; ${props.length_m}m</div>
-            </div>
-          `, { sticky: true });
+              <div class="text-gray-400 text-xs mt-0.5">${props.highway.toUpperCase()} &middot; ${props.length_m} m${meta.length ? ' &middot; ' + meta.join(' &middot; ') : ''}</div>
+            </div>`;
+          }, { sticky: true });
 
           layer.on({
             mouseover(e) {
