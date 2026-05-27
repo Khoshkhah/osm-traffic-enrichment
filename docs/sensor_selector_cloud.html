@@ -836,6 +836,7 @@
     let boundaryData = null;
     let roadsLayer = null;
     let roadsCasingLayer = null;
+    let selGlowLayer = null, selCasingLayer = null, selFillLayer = null;
     let h3Layer = null;
     let boundaryLayer = null;
     let selectedEdges = new Map();
@@ -995,6 +996,7 @@
       baseLayers[name]?.addTo(map);
       document.getElementById('map').classList.toggle('satellite-mode', name === 'Satellite');
       if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
+      renderSelectionLayers();
       buildMobLayersPopover?.();
     }
 
@@ -1208,10 +1210,7 @@
     }
 
     // ── Road styling ──────────────────────────────────────────────────────────
-    function getRoadStyle(feature, isSelected = false) {
-      if (isSelected) {
-        return { color: '#00f0ff', weight: getRoadWeight(feature.properties.highway) + 4, opacity: 1.0, lineCap: 'round', lineJoin: 'round' };
-      }
+    function getRoadStyle(feature, isDimmed = false) {
       const props = feature.properties;
       let baseColor;
       if (baseRoadsTheme === 'mapbox')       baseColor = congestionColors[props.mb_congestion] || congestionColors['no data'];
@@ -1229,6 +1228,7 @@
       } else if (baseRoadsTheme === 'gray' || baseRoadsTheme === 'white') {
         opacity = 0.45;
       }
+      if (isDimmed) opacity *= 0.35;
 
       const dashArray = ['footway','path'].includes(props.highway) ? '4 4' :
                          props.highway === 'cycleway'               ? '6 4' : null;
@@ -1242,8 +1242,52 @@
       };
     }
 
+    function renderSelectionLayers() {
+      // Clean up previous selection overlay
+      if (selGlowLayer)   { map.removeLayer(selGlowLayer);   selGlowLayer   = null; }
+      if (selCasingLayer) { map.removeLayer(selCasingLayer); selCasingLayer = null; }
+      if (selFillLayer)   { map.removeLayer(selFillLayer);   selFillLayer   = null; }
+
+      // Restore or apply road dimming
+      if (roadsLayer)       roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
+      if (roadsCasingLayer) roadsCasingLayer.setStyle(getCasingStyle);
+
+      if (selectedEdges.size === 0) return;
+
+      // Build GeoJSON from stored edge data
+      const selFeatures = [];
+      selectedEdges.forEach(val => {
+        selFeatures.push({ type: 'Feature', geometry: val.geometry, properties: val });
+      });
+      const selGeoJSON = { type: 'FeatureCollection', features: selFeatures };
+      const casingColor = isDarkBaseLayer() ? '#000000' : '#220033';
+
+      // Ensure dedicated pane above roads (overlayPane = 400)
+      if (!map.getPane('selectionPane')) {
+        const pane = map.createPane('selectionPane');
+        pane.style.zIndex = 450;
+      }
+
+      const paneOpt = { pane: 'selectionPane' };
+      selGlowLayer = L.geoJSON(selGeoJSON, {
+        ...paneOpt,
+        style: f => ({ color: '#D000FF', weight: getRoadWeight(f.properties.highway) * 3.0, opacity: 0.35, lineCap: 'round', lineJoin: 'round' })
+      }).addTo(map);
+      selCasingLayer = L.geoJSON(selGeoJSON, {
+        ...paneOpt,
+        style: f => ({ color: casingColor, weight: getRoadWeight(f.properties.highway) * 1.8, opacity: 1.0, lineCap: 'round', lineJoin: 'round' })
+      }).addTo(map);
+      selFillLayer = L.geoJSON(selGeoJSON, {
+        ...paneOpt,
+        style: f => ({ color: '#EE00FF', weight: getRoadWeight(f.properties.highway) * 1.5, opacity: 1.0, lineCap: 'round', lineJoin: 'round' })
+      }).addTo(map);
+    }
+
     // ── Render layers ─────────────────────────────────────────────────────────
     function renderData() {
+      if (selGlowLayer)   { map.removeLayer(selGlowLayer);   selGlowLayer   = null; }
+      if (selCasingLayer) { map.removeLayer(selCasingLayer); selCasingLayer = null; }
+      if (selFillLayer)   { map.removeLayer(selFillLayer);   selFillLayer   = null; }
       if (roadsCasingLayer) { map.removeLayer(roadsCasingLayer); roadsCasingLayer = null; }
       if (roadsLayer)    map.removeLayer(roadsLayer);
       if (h3Layer)       map.removeLayer(h3Layer);
@@ -1295,7 +1339,7 @@
         style: f => getCasingStyle(f)
       }).addTo(map);
       roadsLayer = L.geoJSON({ type: 'FeatureCollection', features: filtered }, {
-        style: f => getRoadStyle(f, selectedEdges.has(f.properties.edge_id)),
+        style: f => getRoadStyle(f, false),
         onEachFeature(feature, layer) {
           const props = feature.properties;
           layer.bindTooltip(() => {
@@ -1312,27 +1356,24 @@
           layer.on({
             mouseover(e) {
               if (!selectedEdges.has(props.edge_id))
-                e.target.setStyle({ color: '#ffffff', weight: 4.5, opacity: 0.95 });
-              e.target.bringToFront();
+                e.target.setStyle({ color: '#ffffff', weight: getRoadWeight(props.highway) + 1, opacity: 0.9 });
             },
             mouseout(e) {
-              if (!selectedEdges.has(props.edge_id)) roadsLayer.resetStyle(e.target);
+              if (!selectedEdges.has(props.edge_id))
+                e.target.setStyle(getRoadStyle(feature, selectedEdges.size > 0));
             },
-            click(e) {
-              const isSelected = selectedEdges.has(props.edge_id);
-              if (isSelected) {
+            click() {
+              if (selectedEdges.has(props.edge_id)) {
                 selectedEdges.delete(props.edge_id);
-                roadsLayer.resetStyle(e.target);
               } else {
                 selectedEdges.set(props.edge_id, { ...props, geometry: feature.geometry });
-                e.target.setStyle(getRoadStyle(feature, true));
-                e.target.bringToFront();
               }
               updateSidebarSelections();
             }
           });
         }
       }).addTo(map);
+      renderSelectionLayers();
     }
 
     // ── Category filter UI ────────────────────────────────────────────────────
@@ -1439,6 +1480,7 @@
         list.appendChild(div);
       });
       lengthLbl.textContent = `${(totalM / 1000).toFixed(2)} km`;
+      renderSelectionLayers();
       syncMobilePeek?.(); syncMobileSelectionTab?.();
     }
 
@@ -1446,7 +1488,6 @@
       if (selectedEdges.has(edge_id)) {
         selectedEdges.delete(edge_id);
         updateSidebarSelections();
-        renderRoadsLayer();
       }
     };
 
@@ -1713,8 +1754,9 @@
     document.getElementById('theme-select').addEventListener('change', e => {
       baseRoadsTheme = e.target.value;
       updateRunSelectorUI();
-      if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.has(f.properties.edge_id)));
+      if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
       if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
+      renderSelectionLayers();
     });
 
     document.getElementById('run-select').addEventListener('change', async e => {
@@ -1932,8 +1974,9 @@
           baseRoadsTheme = t.id;
           document.getElementById('theme-select').value = t.id;
           updateRunSelectorUI();
-          if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.has(f.properties.edge_id)));
+          if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
           if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
+          renderSelectionLayers();
           closeAllMobPopovers();
         });
         pop.appendChild(btn);
