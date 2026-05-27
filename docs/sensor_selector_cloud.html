@@ -1454,6 +1454,7 @@
         lengthLbl.textContent = '0.0 km';
         geoBtn.disabled = csvBtn.disabled = true;
         if (saveBtn) saveBtn.disabled = true;
+        renderSelectionLayers();
         syncMobilePeek?.(); syncMobileSelectionTab?.();
         return;
       }
