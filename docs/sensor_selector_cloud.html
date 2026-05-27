@@ -892,14 +892,15 @@
       return map.hasLayer(baseLayers['Dark Matter']) || map.hasLayer(baseLayers['Satellite']);
     }
 
-    function getCasingStyle(feature) {
+    function getCasingStyle(feature, isDimmed = false) {
       const hw = feature.properties.highway;
       if (['footway','cycleway','path','track','pedestrian','service','living_street'].includes(hw)) return { opacity: 0, weight: 0 };
       const isOsmColor = !['mapbox','google','tomtom','white'].includes(baseRoadsTheme);
       const casingColor = isOsmColor
         ? (isDarkBaseLayer() ? '#000000' : (roadCasingLight[hw] || roadCasingLight.default))
         : (isDarkBaseLayer() ? '#000000' : '#222222');
-      const casingOpacity = isOsmColor ? 0.75 : 0.5;
+      let casingOpacity = isOsmColor ? 0.75 : 0.5;
+      if (isDimmed) casingOpacity *= 0.35;
       return { color: casingColor, weight: getRoadWeight(hw) + 2, opacity: casingOpacity, lineCap: 'round', lineJoin: 'round' };
     }
     const congestionColors = {
@@ -997,7 +998,7 @@
       Object.values(baseLayers).forEach(l => { if (map.hasLayer(l)) map.removeLayer(l); });
       baseLayers[name]?.addTo(map);
       document.getElementById('map').classList.toggle('satellite-mode', name === 'Satellite');
-      if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
+      if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
       renderSelectionLayers();
       buildMobLayersPopover?.();
     }
@@ -1251,7 +1252,7 @@
 
       // Restore or apply road dimming
       if (roadsLayer)       roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
-      if (roadsCasingLayer) roadsCasingLayer.setStyle(getCasingStyle);
+      if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
 
       if (selectedEdges.size === 0) return;
 
@@ -1774,7 +1775,7 @@
       baseRoadsTheme = e.target.value;
       updateRunSelectorUI();
       if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
-      if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
+      if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
       renderSelectionLayers();
     });
 
@@ -1994,7 +1995,7 @@
           document.getElementById('theme-select').value = t.id;
           updateRunSelectorUI();
           if (roadsLayer) roadsLayer.setStyle(f => getRoadStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
-          if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f));
+          if (roadsCasingLayer) roadsCasingLayer.setStyle(f => getCasingStyle(f, selectedEdges.size > 0 && !selectedEdges.has(f.properties.edge_id)));
           renderSelectionLayers();
           closeAllMobPopovers();
         });
