@@ -895,9 +895,11 @@
 
     function getCasingStyle(feature) {
       const hw = feature.properties.highway;
-      if (['mapbox','google','tomtom','gray','white'].includes(baseRoadsTheme)) return { opacity: 0, weight: 0 };
       if (['footway','cycleway','path','track','pedestrian','service','living_street'].includes(hw)) return { opacity: 0, weight: 0 };
-      const casingColor = isDarkBaseLayer() ? '#000000' : (roadCasingLight[hw] || roadCasingLight.default);
+      const isOsmColor = !['mapbox','google','tomtom','gray','white'].includes(baseRoadsTheme);
+      const casingColor = isOsmColor
+        ? (isDarkBaseLayer() ? '#000000' : (roadCasingLight[hw] || roadCasingLight.default))
+        : (isDarkBaseLayer() ? '#000000' : '#222222');
       return { color: casingColor, weight: getRoadWeight(hw) + 2, opacity: 0.75, lineCap: 'round', lineJoin: 'round' };
     }
     const congestionColors = {
