@@ -549,7 +549,6 @@
         <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Road Styling Theme</label>
         <select id="theme-select" class="w-full bg-slate-900 border border-gray-800 text-gray-200 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent">
           <option value="color" selected>OSM Category (Color-Coded)</option>
-          <option value="gray">Monochrome Slate Gray</option>
           <option value="white">Monochrome Bright White</option>
           <option value="mapbox">Mapbox Congestion</option>
           <option value="google">Google Maps Congestion</option>
@@ -896,15 +895,16 @@
     function getCasingStyle(feature) {
       const hw = feature.properties.highway;
       if (['footway','cycleway','path','track','pedestrian','service','living_street'].includes(hw)) return { opacity: 0, weight: 0 };
-      const isOsmColor = !['mapbox','google','tomtom','gray','white'].includes(baseRoadsTheme);
+      const isOsmColor = !['mapbox','google','tomtom','white'].includes(baseRoadsTheme);
       const casingColor = isOsmColor
         ? (isDarkBaseLayer() ? '#000000' : (roadCasingLight[hw] || roadCasingLight.default))
         : (isDarkBaseLayer() ? '#000000' : '#222222');
-      return { color: casingColor, weight: getRoadWeight(hw) + 2, opacity: 0.75, lineCap: 'round', lineJoin: 'round' };
+      const casingOpacity = isOsmColor ? 0.75 : 0.5;
+      return { color: casingColor, weight: getRoadWeight(hw) + 2, opacity: casingOpacity, lineCap: 'round', lineJoin: 'round' };
     }
     const congestionColors = {
       low: '#10b981', moderate: '#eab308', heavy: '#f97316',
-      severe: '#ef4444', 'no data': '#4b5563'
+      severe: '#ef4444', 'no data': '#d1d5db'
     };
 
     // ── Theme ─────────────────────────────────────────────────────────────────
@@ -1218,7 +1218,6 @@
       if (baseRoadsTheme === 'mapbox')       baseColor = congestionColors[props.mb_congestion] || congestionColors['no data'];
       else if (baseRoadsTheme === 'google')  baseColor = congestionColors[props.gg_congestion] || congestionColors['no data'];
       else if (baseRoadsTheme === 'tomtom')  baseColor = congestionColors[props.tt_congestion] || congestionColors['no data'];
-      else if (baseRoadsTheme === 'gray')    baseColor = '#3b4252';
       else if (baseRoadsTheme === 'white')   baseColor = '#e5e7eb';
       else                                   baseColor = roadColors[props.highway] || roadColors.default;
 
@@ -1226,8 +1225,8 @@
       let opacity = 0.9;
       if (isTrafficTheme) {
         const key = baseRoadsTheme === 'mapbox' ? 'mb_congestion' : (baseRoadsTheme === 'google' ? 'gg_congestion' : 'tt_congestion');
-        opacity = (props[key] || 'no data') === 'no data' ? 0.2 : 0.85;
-      } else if (baseRoadsTheme === 'gray' || baseRoadsTheme === 'white') {
+        opacity = (props[key] || 'no data') === 'no data' ? 0.45 : 0.85;
+      } else if (baseRoadsTheme === 'white') {
         opacity = 0.45;
       }
       if (isDimmed) opacity *= 0.35;
@@ -1973,7 +1972,7 @@
     // ── Style popover ─────────────────────────────────────────────────────────
     function buildMobStylePopover() {
       const themes = [
-        { id: 'color',  label: 'OSM Category' }, { id: 'gray',  label: 'Monochrome Gray' },
+        { id: 'color',  label: 'OSM Category' },
         { id: 'white',  label: 'Monochrome White' }, { id: 'mapbox', label: 'Mapbox Congestion' },
         { id: 'google', label: 'Google Congestion' }, { id: 'tomtom', label: 'TomTom Congestion' },
       ];
