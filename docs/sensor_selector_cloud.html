@@ -1379,10 +1379,21 @@
     }
 
     // ── Category filter UI ────────────────────────────────────────────────────
+    const highwayOrder = [
+      'motorway','motorway_link','trunk','trunk_link',
+      'primary','primary_link','secondary','secondary_link',
+      'tertiary','tertiary_link','unclassified','residential',
+      'living_street','service','pedestrian','track','footway','cycleway','path'
+    ];
+    function sortedCategories(set) {
+      const known = highwayOrder.filter(h => set.has(h));
+      const rest  = Array.from(set).filter(h => !highwayOrder.includes(h)).sort();
+      return known.concat(rest);
+    }
     function buildRoadCategoryFilters() {
       const container = document.getElementById('road-filters');
       container.innerHTML = '';
-      Array.from(highwayCategories).sort().forEach(cat => {
+      sortedCategories(highwayCategories).forEach(cat => {
         const color = roadColors[cat] || roadColors.default;
         const div = document.createElement('div');
         div.className = 'flex items-center justify-between text-xs p-1 hover:bg-slate-900 rounded';
@@ -2179,7 +2190,7 @@
       const container = document.getElementById('mob-road-filters');
       if (!container) return;
       container.innerHTML = '';
-      Array.from(highwayCategories).sort().forEach(cat => {
+      sortedCategories(highwayCategories).forEach(cat => {
         const color = roadColors[cat] || roadColors.default;
         const isActive = enabledCategories.has(cat);
         const row = document.createElement('div');
