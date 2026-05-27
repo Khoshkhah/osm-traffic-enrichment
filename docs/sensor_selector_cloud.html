@@ -1312,7 +1312,7 @@
       h3Resolutions.clear();
       h3CellsData.features.forEach(f => { if (f.properties.resolution !== undefined) h3Resolutions.add(f.properties.resolution); });
       const sortedRes = Array.from(h3Resolutions).sort((a, b) => a - b);
-      enabledH3Resolutions = new Set(sortedRes);
+      enabledH3Resolutions = new Set(sortedRes.length ? [sortedRes[0]] : []);
       buildH3ResolutionToggles(sortedRes);
 
       renderBoundaryLayer();
