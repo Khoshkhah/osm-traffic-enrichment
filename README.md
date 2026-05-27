@@ -1,5 +1,8 @@
 # osm-traffic-enrichment
 
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?repo=Khoshkhah/osm-traffic-enrichment)
+[![Sensor Selector (Cloud)](https://img.shields.io/badge/Sensor_Selector-Cloud_%E2%86%97-blue?style=flat)](https://khoshkhah.github.io/osm-traffic-enrichment/sensor_selector_cloud.html)
+
 An end-to-end pipeline that enriches an OSM road network with **real-time traffic congestion**
 from three independent sources — **Mapbox**, **Google Maps**, and **TomTom** — producing a
 routable **DuckDB** database with per-source historical congestion tables.
