@@ -54,12 +54,13 @@
     .light-mode { background-color: #f1f5f9; color: #1e293b; }
     .light-mode #map { background-color: #e8edf2; }
     .light-mode .glass-panel {
-      background: rgba(255,255,255,0.88) !important;
+      background: rgba(255,255,255,0.92) !important;
       border: 1px solid rgba(0,0,0,0.08) !important;
       box-shadow: 0 8px 32px rgba(0,0,0,0.10) !important;
     }
     .light-mode ::-webkit-scrollbar-track { background: #f1f5f9; }
     .light-mode ::-webkit-scrollbar-thumb { background: #94a3b8; }
+    /* Leaflet */
     .light-mode .leaflet-tooltip {
       background: rgba(255,255,255,0.95) !important;
       border: 1px solid rgba(0,0,0,0.12) !important;
@@ -71,26 +72,44 @@
     }
     .light-mode .leaflet-control-layers label { color: #334155 !important; }
     .light-mode .leaflet-control-zoom a { background: rgba(255,255,255,0.9) !important; color: #334155 !important; border-color: #e2e8f0 !important; }
-    /* Tailwind overrides */
+    /* Borders */
     .light-mode .border-gray-800 { border-color: #e2e8f0 !important; }
     .light-mode .border-gray-700 { border-color: #cbd5e1 !important; }
+    /* Overlays / modals / section containers */
     .light-mode .bg-slate-950\/95 { background-color: rgba(248,250,252,0.97) !important; }
     .light-mode .bg-slate-950\/80 { background-color: rgba(241,245,249,0.88) !important; }
-    .light-mode .bg-slate-900    { background-color: #f1f5f9 !important; }
-    .light-mode .bg-slate-900\/80 { background-color: rgba(241,245,249,0.85) !important; }
-    .light-mode .bg-slate-900\/60 { background-color: rgba(241,245,249,0.65) !important; }
-    .light-mode .bg-slate-900\/50 { background-color: rgba(241,245,249,0.55) !important; }
+    .light-mode .bg-slate-950\/50 { background-color: rgba(241,245,249,0.50) !important; }
+    .light-mode .border-gray-900  { border-color: #e2e8f0 !important; }
+    /* Panel / card backgrounds */
+    .light-mode .bg-slate-900    { background-color: #eef2f7 !important; }
+    .light-mode .bg-slate-900\/80 { background-color: rgba(238,242,247,0.85) !important; }
+    .light-mode .bg-slate-900\/60 { background-color: rgba(238,242,247,0.65) !important; }
+    .light-mode .bg-slate-900\/50 { background-color: rgba(238,242,247,0.55) !important; }
     .light-mode .bg-slate-800    { background-color: #e2e8f0 !important; }
     .light-mode .bg-slate-800\/50 { background-color: rgba(226,232,240,0.55) !important; }
-    .light-mode .hover\:bg-slate-900:hover { background-color: #e8edf4 !important; }
-    .light-mode .hover\:bg-slate-700:hover { background-color: #dde3ec !important; }
-    .light-mode .text-white   { color: #1e293b !important; }
+    .light-mode .bg-slate-700    { background-color: #cbd5e1 !important; }
+    /* Hover states */
+    .light-mode .hover\:bg-slate-900:hover { background-color: #e2e8f0 !important; }
+    .light-mode .hover\:bg-slate-800:hover { background-color: #dde3ec !important; }
+    .light-mode .hover\:bg-slate-700:hover { background-color: #cbd5e1 !important; }
+    /* Text — only override on neutral/dark backgrounds; preserve white on colored buttons */
+    .light-mode .text-white  { color: #1e293b !important; }
     .light-mode .text-gray-100 { color: #1e293b !important; }
     .light-mode .text-gray-200 { color: #334155 !important; }
     .light-mode .text-gray-300 { color: #475569 !important; }
     .light-mode .text-gray-400 { color: #64748b !important; }
-    .light-mode .text-gray-500 { color: #94a3b8 !important; }
+    .light-mode .text-gray-500 { color: #64748b !important; }
     .light-mode .text-gray-600 { color: #94a3b8 !important; }
+    /* Restore white text on colored (non-neutral) buttons */
+    .light-mode .bg-blue-600.text-white,
+    .light-mode .bg-blue-500.text-white,
+    .light-mode .bg-emerald-600.text-white,
+    .light-mode .bg-emerald-500.text-white,
+    .light-mode .bg-red-600.text-white,
+    .light-mode .bg-red-500.text-white  { color: #ffffff !important; }
+    /* Colored button hover — also keep white */
+    .light-mode .hover\:bg-blue-500:hover.text-white,
+    .light-mode .hover\:bg-emerald-500:hover.text-white { color: #ffffff !important; }
   </style>
 </head>
 <body class="overflow-hidden h-screen w-screen flex light-mode">
