@@ -70,6 +70,7 @@ You do not need to set it in `options`.
 | Download country PBF | `map/{country}-latest.osm.pbf` |
 | Filter PBF | `pbf/{name}.osm.pbf` |
 | Build network | `db/{name}.duckdb` with `driving/walking/cycling` schemas |
+| Add timezone | IANA timezone (from `timezonefinder`) written to `main.visualization_metadata.timezone` |
 | H3 boundary cells | `boundary_cells` table in DuckDB + CSV/GeoJSON in `output/` |
 
 ### Examples
@@ -193,7 +194,12 @@ python pipeline_traffic.py --config config/tartu_traffic.yaml \
 | 14 | ~9.5 m/px | Fast, less detail |
 | 15 | ~4.8 m/px | — |
 | 16 | ~2.4 m/px | Traffic stripes ~3 px wide *(recommended)* |
-| 17 | ~1.2 m/px | Very large screenshots — auto-reduced if > 160 MP |
+| 17 | ~1.2 m/px | Very large screenshots — auto-reduced if > 80 MP (memory cap) |
+
+The renderer auto-downgrades zoom when the resulting image would exceed
+`MAX_PIXELS = 80,000,000` (keeps the float64 raster under ~2.5 GB so things
+fit on a 24 GB WSL box). The effective zoom — not the requested one — is what
+gets recorded in `runs.zoom`, and `runs.n_tiles` is computed against it.
 
 ### TomTom (`--tomtom-zoom`, default 14)
 
@@ -242,8 +248,9 @@ Summary printed at the end of every run:
   Download country PBF                 done          0.0s
   Filter PBF by boundary               done          1.9s
   Build road network (duckOSM)         done          2.4s
+  Add local timezone to visualization_metadata done   0.4s
   Generate H3 boundary cells           done          0.1s
   ──────────────────────────────────────────────────────────
-  TOTAL                                              4.4s
+  TOTAL                                              4.8s
 ══════════════════════════════════════════════════════════════
 ```

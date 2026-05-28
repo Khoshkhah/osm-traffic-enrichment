@@ -54,6 +54,7 @@ osm-traffic-enrichment/
 ├── scripts/
 │   ├── sensor_selector.py           # Interactive GIS dashboard HTTP server
 │   ├── sensor_selector.html         # Leaflet-based spatial selection interface
+│   ├── motherduck_sync.py           # Sync local .duckdb files to MotherDuck cloud
 │   ├── traffic_db.py                # Python library for querying the DuckDB
 │   ├── mapbox_traffic.py            # MapboxTraffic: fetch tiles + map match
 │   ├── google_traffic.py            # GoogleTraffic: screenshot + pixel match
@@ -64,10 +65,7 @@ osm-traffic-enrichment/
 ├── config/
 │   ├── network.template.yaml        # Template for network configs
 │   ├── traffic.template.yaml        # Template for traffic configs
-│   ├── sodermalm.yaml               # Network config — Södermalm, Stockholm
-│   ├── sodermalm_traffic.yaml       # Traffic config — Södermalm
-│   ├── tartu.yaml                   # Network config — Tartu, Estonia
-│   └── tartu_traffic.yaml           # Traffic config — Tartu
+│   └── {area}.yaml + {area}_traffic.yaml  # Per-area configs — auto-generated on first network run
 │
 ├── notebook/
 │   ├── 0_get_boundary.ipynb         # Create boundary GeoJSON
@@ -83,12 +81,13 @@ osm-traffic-enrichment/
 │   ├── pipeline_cli.md              # CLI reference for both pipelines
 │   ├── database_schema.md           # DuckDB table and column reference
 │   ├── traffic_db.md                # scripts/traffic_db.py API reference
-│   └── traffic_status.md            # Congestion level definitions
+│   ├── traffic_status.md            # Congestion level definitions
+│   ├── sensor_selector_cloud.html   # Cloud-hosted Sensor Selector webpage
+│   ├── map_road_color.md            # Multi-base-layer road styling reference
+│   ├── osm_highway_styles.md        # OSM Carto highway style reference
+│   └── selected_edge_color.md       # Selected-edge UI/UX color spec
 │
-└── boundaries/
-    ├── sodermalm.geojson
-    ├── nacka.geojson
-    └── tartu.geojson
+└── boundaries/                      # Area boundary polygons (one per area)
 ```
 
 **Generated at runtime (git-ignored):**
@@ -114,16 +113,25 @@ logs/   ← timestamped run logs
 | Mapbox token | [account.mapbox.com](https://account.mapbox.com/access-tokens/) |
 | Google Maps JS API key | [console.cloud.google.com](https://console.cloud.google.com/) — enable **Maps JavaScript API** |
 | TomTom API key | [developer.tomtom.com](https://developer.tomtom.com/) — Traffic Flow Tile API |
+| MotherDuck token *(optional)* | [app.motherduck.com](https://app.motherduck.com/) — cloud sync via `scripts/motherduck_sync.py` |
 
 ---
 
 ## Installation
 
+A dedicated conda environment is recommended — duckOSM is installed editable from a
+sibling checkout so any fix landed there is picked up immediately.
+
 ```bash
 git clone https://github.com/khoshkhah/osm-traffic-enrichment.git
+git clone https://github.com/khoshkhah/duckOSM.git  ../duckOSM
 cd osm-traffic-enrichment
 
+conda create -n osm-traffic-enrichment python=3.11 -y
+conda activate osm-traffic-enrichment
+
 pip install -r requirements.txt
+pip install -e ../duckOSM
 playwright install chromium
 
 cp .env.example .env
@@ -131,6 +139,7 @@ cp .env.example .env
 #   MAPBOX_ACCESS_TOKEN=pk.eyJ1...
 #   GOOGLE_MAPS_API_KEY=AIza...
 #   TOMTOM_API_KEY=...
+#   MOTHERDUCK_TOKEN=...        (optional — enables auto-sync after each traffic run)
 ```
 
 ---
@@ -285,12 +294,14 @@ Each source writes to its own history table. `driving.edges` contains pure OSM d
 | Table | Schema | Description |
 |---|---|---|
 | `edges` | `driving` / `walking` / `cycling` | Road segments — geometry, speed, cost, H3 index |
-| `runs` | `main` | One row per traffic fetch execution |
+| `runs` | `main` | One row per traffic fetch execution — includes `n_tiles`, effective `zoom` |
 | `mapbox_congestion_history` | `main` | Mapbox congestion per edge per run |
 | `google_congestion_history` | `main` | Google congestion per edge per run |
 | `tomtom_congestion_history` | `main` | TomTom congestion + raw `traffic_level` per edge per run |
 | `boundary_cells` | `main` | H3 hexagon grid at multiple resolutions |
 | `boundary` | `main` | Boundary polygon |
+| `visualization_metadata` | `main` | Per-area centroid, initial zoom, IANA timezone |
+| `saved_selections` + `saved_selections_meta` | `main` | Edge selections saved through the Sensor Selector webpage |
 
 **Congestion values:** `low` · `moderate` · `heavy` · `severe` · `no data`
 

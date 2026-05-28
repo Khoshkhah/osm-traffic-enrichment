@@ -203,7 +203,7 @@ all3 = db.get_congestion_comparison(sources=['mapbox', 'google', 'tomtom'])
 
 All write methods require `read_only=False`.
 
-### `write_congestion(edge_congestion, source, zoom, n_segments, boundary_name='', traffic_levels=None) → int`
+### `write_congestion(edge_congestion, source, zoom, n_segments, n_tiles=1, boundary_name='', traffic_levels=None) → int`
 
 Write congestion results to `{source}_congestion_history` and `runs`.
 
@@ -211,8 +211,9 @@ Write congestion results to `{source}_congestion_history` and `runs`.
 |---|---|---|
 | `edge_congestion` | `dict` | edge_id → `'low'`\|`'moderate'`\|`'heavy'`\|`'severe'` |
 | `source` | `str` | `'mapbox'`, `'google'`, `'tomtom'`, or any string |
-| `zoom` | `int` | Zoom level used when fetching |
-| `n_segments` | `int` | Total segments/pixels (n_tiles for Mapbox, pixels for Google) |
+| `zoom` | `int` | Zoom level used when fetching (for Google, the *effective* zoom after any auto-downgrade) |
+| `n_segments` | `int` | Total segments (Mapbox/TomTom) or classified traffic pixels (Google) |
+| `n_tiles` | `int` | Web Mercator tiles covering the boundary at `zoom`. Pipeline passes `mb.n_tiles` / `gg.n_tiles` / `tt.n_tiles` from the fetcher. Default `1`. |
 | `boundary_name` | `str` | Area name stored in `runs` |
 | `traffic_levels` | `dict\|None` | TomTom only: edge_id → raw float traffic_level |
 
@@ -272,7 +273,8 @@ edge_cong = traffic.map_match(DB, gdf)
 # 3. Write to DB
 with TrafficDB(DB, read_only=False) as db:
     run_id = db.write_congestion(edge_cong, source='mapbox', zoom=14,
-                                  n_segments=len(gdf), boundary_name='sodermalm')
+                                  n_segments=len(gdf), n_tiles=traffic.n_tiles,
+                                  boundary_name='sodermalm')
 
 # 4. Inspect
 with TrafficDB(DB) as db:
