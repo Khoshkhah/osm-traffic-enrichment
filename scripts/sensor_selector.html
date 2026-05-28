@@ -261,6 +261,8 @@
     let mapboxRunId = 'latest';
     let googleRunId = 'latest';
     let tomtomRunId = 'latest';
+    let dbTimezones = new Map(); // dbName -> timezone string
+    let activeTimezone = 'Europe/Stockholm';
 
     // Saved Selections state
     let savedSelectionLayers = new Map(); // selection_id -> L.geoJSON layer
@@ -446,6 +448,9 @@
         // 3. Fetch Boundary
         const boundaryRes = await fetch(`/api/boundary?db=${dbName}`);
         boundaryData = await boundaryRes.json();
+
+        // Resolve active timezone dynamically
+        activeTimezone = await resolveDatabaseTimezone(dbName, boundaryData);
 
         // 4. Fetch Historical Runs
         try {
@@ -834,6 +839,66 @@
       loadAreaData(selectedDb);
     });
 
+    // Resolve database timezone using boundary coordinates and timeapi.io
+    async function resolveDatabaseTimezone(dbName, boundaryGeoJSON) {
+      if (dbTimezones.has(dbName)) {
+        return dbTimezones.get(dbName);
+      }
+      
+      let resolvedTz = 'Europe/Stockholm'; // Default fallback
+      
+      try {
+        if (boundaryGeoJSON && boundaryGeoJSON.features && boundaryGeoJSON.features.length > 0) {
+          const tempLayer = L.geoJSON(boundaryGeoJSON);
+          const center = tempLayer.getBounds().getCenter();
+          const lat = center.lat;
+          const lon = center.lng;
+          
+          const res = await fetch(`https://timeapi.io/api/timezone/coordinate?latitude=${lat}&longitude=${lon}`);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.timeZone) {
+              resolvedTz = data.timeZone;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Timezone resolution failed, using Stockholm fallback:", e);
+      }
+      
+      dbTimezones.set(dbName, resolvedTz);
+      return resolvedTz;
+    }
+
+    // Convert UTC string to local area timezone format
+    function formatToLocalTime(utcString) {
+      if (!utcString) return '';
+      let cleanUtc = String(utcString);
+      if (!cleanUtc.includes('Z') && !cleanUtc.includes('+') && !/-\d{2}:\d{2}$/.test(cleanUtc)) {
+        cleanUtc = cleanUtc.replace(' ', 'T') + 'Z';
+      }
+      try {
+        const date = new Date(cleanUtc);
+        if (isNaN(date.getTime())) return utcString;
+        const formatted = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: activeTimezone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }).format(date);
+        
+        const tzName = activeTimezone.split('/').pop().replace(/_/g, ' ');
+        return `${formatted.substring(0, 16)} (${tzName} Time)`;
+      } catch (e) {
+        console.error("Timezone format error:", e);
+        return utcString;
+      }
+    }
+
     // Update Run Selector UI Dropdown
     function updateRunSelectorUI() {
       const container = document.getElementById('traffic-run-container');
@@ -864,7 +929,7 @@
         const opt = document.createElement('option');
         opt.value = run.run_id;
         
-        let formattedTime = String(run.fetched_at).replace('T', ' ').substring(0, 16);
+        let formattedTime = formatToLocalTime(run.fetched_at);
         
         opt.textContent = `Run #${run.run_id} (${formattedTime})`;
         select.appendChild(opt);
