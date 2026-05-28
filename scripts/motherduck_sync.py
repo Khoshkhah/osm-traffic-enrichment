@@ -36,7 +36,7 @@ load_dotenv(Path(__file__).parent.parent / ".env", override=True)
 log = logging.getLogger(__name__)
 
 DB_DIR = Path(__file__).parent.parent / "db"
-KNOWN_DBS = ["sodermalm", "sundbyberg", "tartu", "nacka"]
+KNOWN_DBS = ["sodermalm", "sundbyberg", "tartu", "nacka", "lidingo"]
 
 # Tables synced incrementally using run_id as watermark
 _TRAFFIC_TABLES = [

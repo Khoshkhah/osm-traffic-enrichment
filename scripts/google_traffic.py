@@ -107,7 +107,9 @@ def _render_playwright_screenshot(boundary_path: Path, zoom: int, api_key: str,
     img_w = math.ceil((x_max_m - x_min_m) / pixel_scale)
     img_h = math.ceil((y_max_m - y_min_m) / pixel_scale)
 
-    MAX_PIXELS = 160_000_000
+    # 80M pixels keeps the float64 raster under ~2.5 GB so Chromium + numpy +
+    # KD-tree work fits in a 24 GB WSL box. Was 160M but Lidingö hit OOM at 84M.
+    MAX_PIXELS = 80_000_000
     while img_w * img_h > MAX_PIXELS and zoom > 12:
         zoom        -= 1
         pixel_scale  = 40075016.686 / (256 * (2 ** zoom))
