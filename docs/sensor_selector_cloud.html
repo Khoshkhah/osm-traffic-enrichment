@@ -1349,13 +1349,25 @@
       }).addTo(map);
     }
 
+    function shrinkPolygon(coords, factor) {
+      const cx = coords.reduce((s, c) => s + c[0], 0) / coords.length;
+      const cy = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+      return coords.map(([x, y]) => [cx + (x - cx) * factor, cy + (y - cy) * factor]);
+    }
+
     function renderH3Layer() {
       if (h3Layer) map.removeLayer(h3Layer);
       if (!document.getElementById('h3-toggle').checked) return;
       const opacity = document.getElementById('h3-opacity').value / 100;
-      const filtered = h3CellsData.features.filter(f => enabledH3Resolutions.has(f.properties.resolution));
+      const SHRINK = 0.88;
+      const filtered = h3CellsData.features
+        .filter(f => enabledH3Resolutions.has(f.properties.resolution))
+        .map(f => ({
+          ...f,
+          geometry: { ...f.geometry, coordinates: [shrinkPolygon(f.geometry.coordinates[0], SHRINK)] }
+        }));
       h3Layer = L.geoJSON({ type: 'FeatureCollection', features: filtered }, {
-        style: () => ({ fillColor: '#ef4444', fillOpacity: opacity * 0.4, color: '#ef4444', weight: 1, opacity }),
+        style: () => ({ fillColor: '#ef4444', fillOpacity: opacity * 0.4, color: '#ef4444', weight: 0.5, opacity }),
         interactive: false
       }).addTo(map);
     }
