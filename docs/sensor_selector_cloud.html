@@ -1359,7 +1359,7 @@
       if (h3Layer) map.removeLayer(h3Layer);
       if (!document.getElementById('h3-toggle').checked) return;
       const opacity = document.getElementById('h3-opacity').value / 100;
-      const SHRINK = 0.88;
+      const SHRINK = 0.90;
       const filtered = h3CellsData.features
         .filter(f => enabledH3Resolutions.has(f.properties.resolution))
         .map(f => ({
