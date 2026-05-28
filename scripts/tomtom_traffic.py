@@ -142,6 +142,7 @@ class TomTomTraffic:
         self.api_key = api_key
         self.zoom    = zoom
         self.workers = workers
+        self.n_tiles = 0  # set by .fetch()
 
     def fetch(self, boundary_path: str | Path, tiles_dir: str | Path,
               out_file: str | Path) -> gpd.GeoDataFrame:
@@ -158,9 +159,6 @@ class TomTomTraffic:
         tiles_dir     = Path(tiles_dir)
         out_file      = Path(out_file)
 
-        if out_file.exists():
-            return gpd.read_file(out_file)
-
         gdf      = gpd.read_file(boundary_path).to_crs("EPSG:4326")
         boundary = gdf.geometry.union_all()
         w, s, e, n = boundary.bounds
@@ -168,6 +166,10 @@ class TomTomTraffic:
             t for t in mercantile.tiles(w, s, e, n, zooms=self.zoom)
             if boundary.intersects(box(*mercantile.bounds(t)))
         ]
+        self.n_tiles = len(tiles)
+
+        if out_file.exists():
+            return gpd.read_file(out_file)
 
         tiles_dir.mkdir(parents=True, exist_ok=True)
         tile_paths: dict = {}

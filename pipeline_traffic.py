@@ -82,7 +82,7 @@ def run_mapbox(db_path: Path, boundary: Path, zoom: int,
     with TrafficDB(str(db_path), read_only=False) as db:
         run_id = db.write_congestion(
             edge_cong, source="mapbox", zoom=zoom,
-            n_segments=len(gdf), boundary_name=name,
+            n_segments=len(gdf), n_tiles=mb.n_tiles, boundary_name=name,
         )
     log.info(f"  mapbox_congestion_history: {len(edge_cong):,} rows (run_id={run_id})")
 
@@ -111,7 +111,7 @@ def run_google(db_path: Path, boundary: Path, zoom: int,
     with TrafficDB(str(db_path), read_only=False) as db:
         run_id = db.write_congestion(
             edge_cong, source="google", zoom=zoom,
-            n_segments=total, boundary_name=name,
+            n_segments=total, n_tiles=gg.n_tiles, boundary_name=name,
         )
     log.info(f"  google_congestion_history: {len(edge_cong):,} rows (run_id={run_id})")
 
@@ -144,7 +144,7 @@ def run_tomtom(db_path: Path, boundary: Path, zoom: int,
     with TrafficDB(str(db_path), read_only=False) as db:
         run_id = db.write_congestion(
             edge_cong, source="tomtom", zoom=zoom,
-            n_segments=len(gdf), boundary_name=name,
+            n_segments=len(gdf), n_tiles=tt.n_tiles, boundary_name=name,
             traffic_levels=traffic_levels,
         )
     log.info(f"  tomtom_congestion_history: {len(edge_cong):,} rows (run_id={run_id})")

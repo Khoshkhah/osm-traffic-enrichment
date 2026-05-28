@@ -450,6 +450,7 @@ class TrafficDB:
         source:          str,
         zoom:            int,
         n_segments:      int,
+        n_tiles:         int            = 1,
         boundary_name:   str            = "",
         traffic_levels:  Optional[dict] = None,
     ) -> int:
@@ -462,6 +463,7 @@ class TrafficDB:
         source          : 'mapbox', 'google', 'tomtom', or any string
         zoom            : zoom level used when fetching
         n_segments      : total traffic pixels (Google) or segments (Mapbox/TomTom)
+        n_tiles         : count of map tiles covering the boundary at `zoom`
         boundary_name   : area name stored in runs
         traffic_levels  : optional dict edge_id → float (TomTom raw traffic_level only)
 
@@ -481,7 +483,7 @@ class TrafficDB:
 
         self.con.execute(
             "INSERT INTO runs VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [run_id, boundary_name, source, zoom, fetched_at, 1, n_segments],
+            [run_id, boundary_name, source, zoom, fetched_at, n_tiles, n_segments],
         )
 
         if edge_congestion:

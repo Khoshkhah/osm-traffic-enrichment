@@ -18,9 +18,11 @@ from pathlib import Path
 from typing import Optional
 
 import geopandas as gpd
+import mercantile
 import numpy as np
 import pyproj
 import requests
+from shapely.geometry import box
 from shapely.ops import transform as shapely_transform
 
 _SEVERITY = {"severe": 4, "heavy": 3, "moderate": 2, "low": 1}
@@ -178,6 +180,7 @@ class GoogleTraffic:
     def __init__(self, api_key: str, zoom: int = 16) -> None:
         self.api_key = api_key
         self.zoom    = zoom
+        self.n_tiles = 0  # set by .map_match() — count of map tiles covering the boundary
 
     def render_screenshot(self, boundary_path: str | Path):
         """
@@ -222,6 +225,15 @@ class GoogleTraffic:
 
         proj_fwd = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
         proj_inv = pyproj.Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
+
+        # Count map tiles covering the boundary at the requested zoom (for runs.n_tiles)
+        bgdf = gpd.read_file(boundary_path).to_crs("EPSG:4326")
+        boundary = bgdf.geometry.union_all()
+        w, s, e, n = boundary.bounds
+        self.n_tiles = sum(
+            1 for t in mercantile.tiles(w, s, e, n, zooms=self.zoom)
+            if boundary.intersects(box(*mercantile.bounds(t)))
+        )
 
         # Load OSM edges
         con = duckdb.connect(str(db_path), read_only=True)

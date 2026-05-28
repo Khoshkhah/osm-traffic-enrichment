@@ -207,7 +207,7 @@ The `run_id` links to the source-specific history table.
 | `source` | VARCHAR | `'mapbox'`, `'google'`, or `'tomtom'` |
 | `zoom` | INTEGER | Tile zoom level used |
 | `fetched_at` | TIMESTAMP | UTC timestamp of the fetch |
-| `n_tiles` | INTEGER | Number of tiles downloaded |
+| `n_tiles` | INTEGER | Web Mercator tiles covering the boundary at this run's `zoom` (XYZ scheme). For Mapbox/TomTom this equals the number of tile downloads; for Google one Playwright screenshot is taken but the same tile-grid count is reported for consistency. |
 | `n_segments` | INTEGER | Number of traffic segments decoded |
 
 ---
