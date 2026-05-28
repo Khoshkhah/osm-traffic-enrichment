@@ -27,12 +27,14 @@ sodermalm.duckdb
 │
 └── main.*           Enrichment data added by this pipeline
     ├── boundary                   Boundary polygon from notebook 0
-    ├── visualization_metadata     Map center/zoom for web apps
+    ├── visualization_metadata     Map center/zoom/timezone for web apps
     ├── runs                       One row per traffic fetch execution (all sources)
     ├── mapbox_congestion_history  Mapbox congestion time-series per edge
     ├── google_congestion_history  Google congestion time-series per edge
     ├── tomtom_congestion_history  TomTom congestion + raw traffic_level per edge
-    └── boundary_cells             H3 hexagon grid covering the boundary
+    ├── boundary_cells             H3 hexagon grid covering the boundary
+    ├── saved_selections_meta     ─┐ Selection sets saved from the Sensor Selector
+    └── saved_selections          ─┘ webpage (scripts/sensor_selector.py)
 ```
 
 ---
@@ -296,9 +298,27 @@ The boundary GeoJSON used to filter the network (from notebook 0).
 
 ---
 
+## `main.visualization_metadata` — per-area metadata for web apps
+
+One row per database. Populated during `pipeline_network.py`: the boundary, centroid,
+and zoom come from duckOSM (step [2]); the IANA timezone is added in step [3] via
+`timezonefinder` from the centroid coordinates.
+
+| Column | Type | Description |
+|---|---|---|
+| `boundary_geojson` | JSON | GeoJSON of the boundary polygon |
+| `center_lat` | DOUBLE | Latitude of the boundary centroid |
+| `center_lon` | DOUBLE | Longitude of the boundary centroid |
+| `initial_zoom` | INTEGER | Recommended starting zoom level for the map |
+| `timezone` | VARCHAR | IANA timezone name at the centroid (e.g. `Europe/Stockholm`) |
+
+---
+
 ## `main.saved_selections_meta` — Saved selection sets metadata
 
-Contains metadata and custom explanatory notes/descriptions for road selection sets saved via the Sensor Selector.
+Created and written by the **Sensor Selector webpage** (`scripts/sensor_selector.py` —
+a small `http.server` app that serves `scripts/sensor_selector.html`). Contains metadata
+and custom explanatory notes for road selection sets saved through the UI.
 
 | Column | Type | Description |
 |---|---|---|
@@ -310,6 +330,7 @@ Contains metadata and custom explanatory notes/descriptions for road selection s
 
 ## `main.saved_selections` — Saved selection road mappings
 
+Created and written by the **Sensor Selector webpage** alongside `saved_selections_meta`.
 Contains normalized mappings of road edge IDs belonging to each saved selection set.
 
 | Column | Type | Description |

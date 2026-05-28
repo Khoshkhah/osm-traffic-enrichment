@@ -848,6 +848,8 @@
     let mapboxRunId = 'latest';
     let googleRunId = 'latest';
     let tomtomRunId = 'latest';
+    let dbTimezones = new Map(); // dbName -> timezone string
+    let activeTimezone = 'Europe/Stockholm';
     let savedSelectionLayers = new Map();
     let baseLayers = null;
 
@@ -1177,6 +1179,9 @@
             properties: {}
           }))
         };
+
+        // Resolve active timezone from visualization_metadata.timezone
+        activeTimezone = await resolveDatabaseTimezone(dbName);
 
         // 4. Runs
         try {
@@ -1545,6 +1550,58 @@
       }
     };
 
+    // Resolve database timezone from main.visualization_metadata.timezone
+    // (populated by pipeline_network.py step [3] via timezonefinder)
+    async function resolveDatabaseTimezone(dbName) {
+      if (dbTimezones.has(dbName)) {
+        return dbTimezones.get(dbName);
+      }
+
+      let resolvedTz = 'Europe/Stockholm'; // Fallback if column is missing or null
+      try {
+        const rows = await mdQuery(
+          `SELECT timezone FROM ${dbName}.main.visualization_metadata LIMIT 1`
+        );
+        if (rows && rows.length && rows[0].timezone) {
+          resolvedTz = rows[0].timezone;
+        }
+      } catch (e) {
+        console.warn(`Timezone lookup failed for ${dbName}, using Stockholm fallback:`, e);
+      }
+
+      dbTimezones.set(dbName, resolvedTz);
+      return resolvedTz;
+    }
+
+    // Convert UTC string to local area timezone format
+    function formatToLocalTime(utcString) {
+      if (!utcString) return '';
+      let cleanUtc = String(utcString);
+      if (!cleanUtc.includes('Z') && !cleanUtc.includes('+') && !/-\d{2}:\d{2}$/.test(cleanUtc)) {
+        cleanUtc = cleanUtc.replace(' ', 'T') + 'Z';
+      }
+      try {
+        const date = new Date(cleanUtc);
+        if (isNaN(date.getTime())) return utcString;
+        const formatted = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: activeTimezone,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }).format(date);
+        
+        const tzName = activeTimezone.split('/').pop().replace(/_/g, ' ');
+        return `${formatted.substring(0, 16)} (${tzName} Time)`;
+      } catch (e) {
+        console.error("Timezone format error:", e);
+        return utcString;
+      }
+    }
+
     // ── Run selector UI ───────────────────────────────────────────────────────
     function updateRunSelectorUI() {
       const container = document.getElementById('traffic-run-container');
@@ -1559,7 +1616,7 @@
       sourceRuns.forEach(run => {
         const opt = document.createElement('option');
         opt.value = run.run_id;
-        let ts = String(run.fetched_at).replace('T', ' ').substring(0, 16);
+        let ts = formatToLocalTime(run.fetched_at);
         opt.textContent = `Run #${run.run_id} (${ts})`;
         select.appendChild(opt);
       });
@@ -2069,7 +2126,7 @@
         content.appendChild(btn);
       };
       addRunBtn('Latest Snapshot', 'latest');
-      sourceRuns.forEach(run => addRunBtn(`Run #${run.run_id}  ${run.fetched_at.substring(0,16)}`, run.run_id));
+      sourceRuns.forEach(run => addRunBtn(`Run #${run.run_id}  ${formatToLocalTime(run.fetched_at)}`, run.run_id));
     }
 
     async function mobSelectRun(runId) {

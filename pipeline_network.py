@@ -15,7 +15,8 @@ WHAT IT DOES:
     [0] (optional) Download country PBF from Geofabrik
     [1] Filter country PBF to boundary extent (osmium extract)
     [2] Build road network via duckOSM → DuckDB
-    [3] (optional) Generate H3 boundary cells for each resolution in h3_resolutions
+    [3] Add local IANA timezone to visualization_metadata (from centroid)
+    [4] (optional) Generate H3 boundary cells for each resolution in h3_resolutions
 
 CONFIG FILE KEYS (all optional — CLI flags override):
     name            Area name for output files
@@ -246,7 +247,52 @@ def build_network(pbf: Path, boundary: Path, name: str, db_path: Path,
     con.close()
 
 
-# ── Step 3 — H3 boundary cells ───────────────────────────────────────────────
+# ── Step 3 — Timezone ────────────────────────────────────────────────────────
+
+def add_timezone(db_path: Path) -> None:
+    """Look up the IANA timezone from the centroid in visualization_metadata
+    and store it in a `timezone` column on the same table."""
+    try:
+        from timezonefinder import TimezoneFinder
+    except ImportError:
+        raise ImportError("timezonefinder not installed — run: pip install timezonefinder")
+
+    con = duckdb.connect(str(db_path))
+    try:
+        # Spatial must be loaded before CHECKPOINT — the DB has RTREE indexes on edges
+        con.execute("INSTALL spatial; LOAD spatial")
+        exists = con.execute(
+            "SELECT count(*) FROM duckdb_tables() "
+            "WHERE schema_name='main' AND table_name='visualization_metadata'"
+        ).fetchone()[0]
+        if not exists:
+            log.warning("  visualization_metadata not found — skipping")
+            return
+
+        row = con.execute(
+            "SELECT center_lat, center_lon FROM main.visualization_metadata"
+        ).fetchone()
+        if not row or row[0] is None or row[1] is None:
+            log.warning("  visualization_metadata has no centroid — skipping")
+            return
+        lat, lon = row
+
+        tz = TimezoneFinder().timezone_at(lat=lat, lng=lon)
+        if tz is None:
+            log.warning(f"  No timezone found for ({lat:.4f}, {lon:.4f})")
+            return
+
+        cols = [r[0] for r in con.execute("DESCRIBE main.visualization_metadata").fetchall()]
+        if "timezone" not in cols:
+            con.execute("ALTER TABLE main.visualization_metadata ADD COLUMN timezone VARCHAR")
+        con.execute("UPDATE main.visualization_metadata SET timezone = ?", [tz])
+        con.execute("CHECKPOINT")
+        log.info(f"  Timezone: {tz}  (centroid: {lat:.4f}, {lon:.4f})")
+    finally:
+        con.close()
+
+
+# ── Step 4 — H3 boundary cells ───────────────────────────────────────────────
 
 def generate_h3_cells(boundary_path: Path, db_path: Path,
                       resolutions: list[int], output_dir: Path) -> None:
@@ -566,8 +612,11 @@ def main():
                           modes_override=args.modes,
                           h3_resolutions_hint=resolutions or None)
 
+        with StepTimer("[3] Add local timezone to visualization_metadata"):
+            add_timezone(db_path)
+
         if resolutions and not args.no_h3:
-            with StepTimer("[3] Generate H3 boundary cells"):
+            with StepTimer("[4] Generate H3 boundary cells"):
                 generate_h3_cells(boundary, db_path, resolutions, output_dir)
 
         # ── Save default configs if they do not exist ─────────────────────
