@@ -110,9 +110,11 @@ def run_google(db_path: Path, boundary: Path, zoom: int,
 
     with TrafficDB(str(db_path), read_only=False) as db:
         run_id = db.write_congestion(
-            edge_cong, source="google", zoom=zoom,
+            edge_cong, source="google", zoom=gg.effective_zoom,
             n_segments=total, n_tiles=gg.n_tiles, boundary_name=name,
         )
+    if gg.effective_zoom != zoom:
+        log.info(f"  Note: requested zoom={zoom}, rendered at zoom={gg.effective_zoom} (memory cap)")
     log.info(f"  google_congestion_history: {len(edge_cong):,} rows (run_id={run_id})")
 
     _export_edges(db_path, edge_cong, "congestion_google",

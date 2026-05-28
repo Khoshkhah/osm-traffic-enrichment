@@ -83,7 +83,13 @@ def _build_traffic_raster(screenshot_img) -> np.ndarray:
 
 def _render_playwright_screenshot(boundary_path: Path, zoom: int, api_key: str,
                                    proj_fwd, proj_inv):
-    """Render Google Maps traffic via Playwright. Returns (img, x_min_m, y_max_m, pixel_scale)."""
+    """Render Google Maps traffic via Playwright.
+
+    The requested zoom may be downgraded internally if the resulting image
+    would exceed `MAX_PIXELS`. The effective zoom actually used is returned
+    so callers can record it in the runs table.
+
+    Returns (img, x_min_m, y_max_m, pixel_scale, effective_zoom)."""
     try:
         from playwright.async_api import async_playwright
     except ImportError:
@@ -159,7 +165,7 @@ def _render_playwright_screenshot(boundary_path: Path, zoom: int, api_key: str,
         raise RuntimeError("Playwright rendering timed out after 60 s")
 
     img = Image.open(BytesIO(_out["png"])).convert("RGBA")
-    return img, x_min_m, y_max_m, pixel_scale
+    return img, x_min_m, y_max_m, pixel_scale, zoom
 
 
 # ── Public class ──────────────────────────────────────────────────────────────
@@ -180,27 +186,35 @@ class GoogleTraffic:
     MIN_NEIGHBORS     = 5
 
     def __init__(self, api_key: str, zoom: int = 16) -> None:
-        self.api_key = api_key
-        self.zoom    = zoom
-        self.n_tiles = 0  # set by .map_match() — count of map tiles covering the boundary
+        self.api_key        = api_key
+        self.zoom           = zoom
+        self.effective_zoom = zoom  # may be downgraded by .map_match() / .render_screenshot()
+        self.n_tiles        = 0     # set by .map_match() at effective_zoom
 
     def render_screenshot(self, boundary_path: str | Path):
         """
         Render a Google Maps traffic screenshot for the boundary area.
 
+        The requested `self.zoom` may be downgraded if the resulting image would
+        exceed the renderer's `MAX_PIXELS` cap; the effective zoom is also
+        stored on `self.effective_zoom`.
+
         Returns
         -------
-        (img, x_min_m, y_max_m, pixel_scale)
-            img         : PIL Image (RGBA)
-            x_min_m     : west edge in EPSG:3857 metres
-            y_max_m     : north edge in EPSG:3857 metres
-            pixel_scale : metres per pixel
+        (img, x_min_m, y_max_m, pixel_scale, effective_zoom)
+            img            : PIL Image (RGBA)
+            x_min_m        : west edge in EPSG:3857 metres
+            y_max_m        : north edge in EPSG:3857 metres
+            pixel_scale    : metres per pixel
+            effective_zoom : zoom actually used to render
         """
         proj_fwd = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
         proj_inv = pyproj.Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
-        return _render_playwright_screenshot(
+        result = _render_playwright_screenshot(
             Path(boundary_path), self.zoom, self.api_key, proj_fwd, proj_inv
         )
+        self.effective_zoom = result[4]
+        return result
 
     def build_raster(self, screenshot_img) -> np.ndarray:
         """Classify pixels by traffic color. Returns uint8 array (0=none, 1-4=level)."""
@@ -228,15 +242,6 @@ class GoogleTraffic:
         proj_fwd = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
         proj_inv = pyproj.Transformer.from_crs("EPSG:3857", "EPSG:4326", always_xy=True)
 
-        # Count map tiles covering the boundary at the requested zoom (for runs.n_tiles)
-        bgdf = gpd.read_file(boundary_path).to_crs("EPSG:4326")
-        boundary = bgdf.geometry.union_all()
-        w, s, e, n = boundary.bounds
-        self.n_tiles = sum(
-            1 for t in mercantile.tiles(w, s, e, n, zooms=self.zoom)
-            if boundary.intersects(box(*mercantile.bounds(t)))
-        )
-
         # Load OSM edges
         con = duckdb.connect(str(db_path), read_only=True)
         con.execute("INSTALL spatial")
@@ -252,10 +257,20 @@ class GoogleTraffic:
         ).reset_index(drop=True)
         edges = edges[edges.geometry.geom_type.isin(["LineString", "MultiLineString"])]
 
-        # Render and classify screenshot
-        screenshot_img, x_min_m, y_max_m, pixel_scale = _render_playwright_screenshot(
+        # Render and classify screenshot. The renderer may auto-downgrade zoom
+        # for memory; track the effective zoom and compute n_tiles against it.
+        screenshot_img, x_min_m, y_max_m, pixel_scale, eff_zoom = _render_playwright_screenshot(
             Path(boundary_path), self.zoom, self.api_key, proj_fwd, proj_inv
         )
+        self.effective_zoom = eff_zoom
+        bgdf = gpd.read_file(boundary_path).to_crs("EPSG:4326")
+        bgeom = bgdf.geometry.union_all()
+        bw, bs, be, bn = bgeom.bounds
+        self.n_tiles = sum(
+            1 for t in mercantile.tiles(bw, bs, be, bn, zooms=eff_zoom)
+            if bgeom.intersects(box(*mercantile.bounds(t)))
+        )
+
         boundary_raster = _build_traffic_raster(screenshot_img)
         total = int((boundary_raster > 0).sum())
         if total == 0:
