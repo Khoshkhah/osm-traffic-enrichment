@@ -1142,16 +1142,20 @@
       document.getElementById('saved-note-box')?.classList.add('hidden');
 
       try {
-        // 1. Roads + traffic
-        showLoading('Loading Data', `Loading roads for ${dbName}...`);
-        const roadsRows = await mdQuery(buildRoadsSQL(dbName, 'latest', 'latest', 'latest'));
+        showLoading('Loading Data', `Loading ${dbName}...`);
+
+        // Fire all four queries in parallel
+        const [roadsRows, h3Rows, boundaryRows, runsRows] = await Promise.all([
+          mdQuery(buildRoadsSQL(dbName, 'latest', 'latest', 'latest')),
+          mdQuery(`SELECT h3_id, resolution, ST_AsGeoJSON(geometry) AS geojson FROM ${dbName}.boundary_cells`),
+          mdQuery(`SELECT ST_AsGeoJSON(geom) AS geojson FROM ${dbName}.boundary LIMIT 1`)
+            .catch(() => mdQuery(`SELECT ST_AsGeoJSON(geometry) AS geojson FROM ${dbName}.boundary LIMIT 1`)),
+          mdQuery(`SELECT run_id, source, fetched_at FROM ${dbName}.main.runs ORDER BY fetched_at DESC`)
+            .catch(e => { console.warn('No runs table:', e.message); return []; })
+        ]);
+
         roadsData = rowsToRoadsGeoJSON(roadsRows);
 
-        // 2. H3 cells
-        showLoading('Loading Data', `Loading H3 grid for ${dbName}...`);
-        const h3Rows = await mdQuery(
-          `SELECT h3_id, resolution, ST_AsGeoJSON(geometry) AS geojson FROM ${dbName}.boundary_cells`
-        );
         h3CellsData = {
           type: 'FeatureCollection',
           features: h3Rows.map(r => ({
@@ -1161,14 +1165,6 @@
           }))
         };
 
-        // 3. Boundary (try both column names)
-        showLoading('Loading Data', `Loading boundary for ${dbName}...`);
-        let boundaryRows;
-        try {
-          boundaryRows = await mdQuery(`SELECT ST_AsGeoJSON(geom) AS geojson FROM ${dbName}.boundary LIMIT 1`);
-        } catch {
-          boundaryRows = await mdQuery(`SELECT ST_AsGeoJSON(geometry) AS geojson FROM ${dbName}.boundary LIMIT 1`);
-        }
         boundaryData = {
           type: 'FeatureCollection',
           features: boundaryRows.filter(r => r.geojson).map(r => ({
@@ -1178,20 +1174,11 @@
           }))
         };
 
-        // 4. Runs
-        try {
-          const runsRows = await mdQuery(
-            `SELECT run_id, source, fetched_at FROM ${dbName}.main.runs ORDER BY fetched_at DESC`
-          );
-          allRuns = runsRows.map(r => ({
-            run_id: r.run_id,
-            source: r.source,
-            fetched_at: String(r.fetched_at).substring(0, 19)
-          }));
-        } catch (e) {
-          console.warn('No runs table:', e.message);
-          allRuns = [];
-        }
+        allRuns = runsRows.map(r => ({
+          run_id: r.run_id,
+          source: r.source,
+          fetched_at: String(r.fetched_at).substring(0, 19)
+        }));
 
         if (!roadsData || roadsData.features.length === 0) {
           showLoading('Empty Database', 'No roads found in this database.', true);
@@ -1621,12 +1608,15 @@
 
     // ── Saved selections ──────────────────────────────────────────────────────
     async function ensureSelectionTables() {
-      await mdQuery(`CREATE TABLE IF NOT EXISTS ${selectedDb}.main.saved_selections_meta (selection_id VARCHAR PRIMARY KEY, description VARCHAR, saved_at TIMESTAMP)`);
-      await mdQuery(`CREATE TABLE IF NOT EXISTS ${selectedDb}.main.saved_selections (selection_id VARCHAR, edge_id INTEGER, lanes VARCHAR, oneway VARCHAR, maxspeed_kmh INTEGER, PRIMARY KEY (selection_id, edge_id))`);
-      // Add columns to pre-existing tables that lack them
-      for (const col of ['lanes VARCHAR', 'oneway VARCHAR', 'maxspeed_kmh INTEGER']) {
-        try { await mdQuery(`ALTER TABLE ${selectedDb}.main.saved_selections ADD COLUMN IF NOT EXISTS ${col}`); } catch {}
-      }
+      await Promise.all([
+        mdQuery(`CREATE TABLE IF NOT EXISTS ${selectedDb}.main.saved_selections_meta (selection_id VARCHAR PRIMARY KEY, description VARCHAR, saved_at TIMESTAMP)`),
+        mdQuery(`CREATE TABLE IF NOT EXISTS ${selectedDb}.main.saved_selections (selection_id VARCHAR, edge_id INTEGER, lanes VARCHAR, oneway VARCHAR, maxspeed_kmh INTEGER, PRIMARY KEY (selection_id, edge_id))`)
+      ]);
+      await Promise.all(
+        ['lanes VARCHAR', 'oneway VARCHAR', 'maxspeed_kmh INTEGER'].map(col =>
+          mdQuery(`ALTER TABLE ${selectedDb}.main.saved_selections ADD COLUMN IF NOT EXISTS ${col}`).catch(() => {})
+        )
+      );
     }
 
     async function loadSavedSelections() {
