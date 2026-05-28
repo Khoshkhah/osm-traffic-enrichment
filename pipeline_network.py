@@ -46,7 +46,7 @@ import geopandas as gpd
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from shapely.geometry import box, mapping, shape
+from shapely.geometry import box, mapping, shape, Polygon as ShapelyPolygon
 
 load_dotenv(Path(__file__).parent / ".env", override=True)
 
@@ -276,11 +276,21 @@ def generate_h3_cells(boundary_path: Path, db_path: Path,
     """)
 
     for res in resolutions:
-        buf_deg  = h3.average_hexagon_edge_length(res, "km") / 111.0 * 0.5
+        # Buffer by one full circumradius (center-to-vertex = edge_length for H3)
+        # so polygon_to_cells captures all hexagons that overlap the boundary,
+        # not just those whose centre falls inside.
+        buf_deg  = h3.average_hexagon_edge_length(res, "km") / 111.0 * 1.0
         buffered = mapping(shapely_poly.buffer(buf_deg))
         outer    = swap(buffered["coordinates"][0])
         holes    = [swap(r) for r in buffered["coordinates"][1:]]
-        cells    = list(h3.polygon_to_cells(h3.LatLngPoly(outer, *holes), res))
+        all_cells = list(h3.polygon_to_cells(h3.LatLngPoly(outer, *holes), res))
+
+        # Keep only cells that genuinely intersect the original (unbuffered) area
+        def cell_shape(cell):
+            coords = [(lon, lat) for lat, lon in h3.cell_to_boundary(cell)]
+            return ShapelyPolygon(coords)
+
+        cells = [c for c in all_cells if cell_shape(c).intersects(shapely_poly)]
 
         cell_rows = []
         for cell in cells:
