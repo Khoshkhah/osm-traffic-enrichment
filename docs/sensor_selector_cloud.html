@@ -978,7 +978,7 @@
     // ── Map init ──────────────────────────────────────────────────────────────
     function initMap() {
       if (map) return;
-      map = L.map('map', { zoomControl: false, attributionControl: false, tapTolerance: 20 }).setView([59.35, 18.0], 13);
+      map = L.map('map', { zoomControl: false, attributionControl: false }).setView([59.35, 18.0], 13);
 
       baseLayers = {
         'Voyager':       L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom: 20 }),
@@ -1302,7 +1302,6 @@
               e.target.setStyle({ color: '#EE00FF', weight: getRoadWeight(props.highway) * 1.5, opacity: 1.0 });
             },
             click() {
-              if ('ontouchstart' in window) return;
               selectedEdges.delete(props.edge_id);
               updateSidebarSelections();
             }
@@ -1361,68 +1360,6 @@
       }).addTo(map);
     }
 
-    // ── Touch helpers ─────────────────────────────────────────────────────────
-    function pointToSegmentDist(p, a, b) {
-      const dx = b.x - a.x, dy = b.y - a.y;
-      if (dx === 0 && dy === 0) return Math.hypot(p.x - a.x, p.y - a.y);
-      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
-      return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
-    }
-
-    function nearestRoadFeature(containerPoint, maxPx = 30) {
-      let minDist = Infinity, nearest = null;
-      if (!roadsLayer) return null;
-      roadsLayer.eachLayer(layer => {
-        const lls = layer.getLatLngs();
-        for (let i = 0; i < lls.length - 1; i++) {
-          const a = map.latLngToContainerPoint(lls[i]);
-          const b = map.latLngToContainerPoint(lls[i + 1]);
-          const d = pointToSegmentDist(containerPoint, a, b);
-          if (d < minDist) { minDist = d; nearest = layer; }
-        }
-      });
-      return minDist <= maxPx ? nearest : null;
-    }
-
-    let touchPressTimer = null;
-    let touchStartPt = null;
-
-    map.on('touchstart', e => {
-      if (e.originalEvent.touches.length !== 1) return;
-      const t = e.originalEvent.touches[0];
-      touchStartPt = map.mouseEventToContainerPoint(t);
-      touchPressTimer = setTimeout(() => {
-        touchPressTimer = null;
-        const layer = nearestRoadFeature(touchStartPt, 30);
-        if (!layer) return;
-        const props = layer.feature.properties;
-        if (selectedEdges.has(props.edge_id)) {
-          selectedEdges.delete(props.edge_id);
-        } else {
-          selectedEdges.set(props.edge_id, { ...props, geometry: layer.feature.geometry });
-        }
-        navigator.vibrate?.(40);
-        updateSidebarSelections();
-      }, 500);
-    });
-
-    map.on('touchmove', e => {
-      if (!touchPressTimer) return;
-      const t = e.originalEvent.touches[0];
-      const cur = map.mouseEventToContainerPoint(t);
-      if (Math.hypot(cur.x - touchStartPt.x, cur.y - touchStartPt.y) > 8) {
-        clearTimeout(touchPressTimer);
-        touchPressTimer = null;
-      }
-    });
-
-    map.on('touchend', () => {
-      if (touchPressTimer) {
-        clearTimeout(touchPressTimer);
-        touchPressTimer = null;
-      }
-    });
-
     function renderRoadsLayer() {
       if (roadsCasingLayer) { map.removeLayer(roadsCasingLayer); roadsCasingLayer = null; }
       if (roadsLayer) map.removeLayer(roadsLayer);
@@ -1455,7 +1392,6 @@
                 e.target.setStyle(getRoadStyle(feature, selectedEdges.size > 0));
             },
             click() {
-              if ('ontouchstart' in window) return;
               if (selectedEdges.has(props.edge_id)) {
                 selectedEdges.delete(props.edge_id);
               } else {
