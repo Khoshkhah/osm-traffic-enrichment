@@ -1,0 +1,15 @@
+# Traffic config for lidingo
+# Auto-generated during pipeline run on 2026-05-28 07:58:28 UTC
+
+name: lidingo
+db_path: db/lidingo.duckdb
+refresh: false
+
+traffic_sources:
+  - mapbox
+  - google
+  - tomtom
+
+mapbox_zoom: 14
+google_zoom: 15   # downgraded from 16 to keep screenshot under WSL memory ceiling
+tomtom_zoom: 14

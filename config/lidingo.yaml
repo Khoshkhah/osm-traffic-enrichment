@@ -1,0 +1,27 @@
+# Network config for lidingo
+# Auto-generated during pipeline run on 2026-05-28 07:58:28 UTC
+
+name: lidingo
+boundary_path: boundaries/lidingo.geojson
+country_url: https://download.geofabrik.de/europe/sweden-latest.osm.pbf
+refresh: false
+
+h3_resolutions:
+  - 6
+  - 7
+  - 8
+
+output_path: db
+
+options:
+  build_graph: true
+  h3_indexing: true
+  simplify: true
+  process_speeds: true
+  extract_restrictions: true
+  calculate_costs: true
+
+modes:
+  - driving
+  - walking
+  - cycling
