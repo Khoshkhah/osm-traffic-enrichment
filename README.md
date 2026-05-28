@@ -216,25 +216,38 @@ python pipeline_traffic.py --config config/tartu_traffic.yaml --refresh
 
 ## Interactive Segment Selector Dashboard
 
-An interactive glassmorphic GIS dashboard is provided to visually select road segments, scrub through historical traffic patterns, overlay H3 hexagon grids, save custom sensor configurations with notes inside DuckDB, and export selections as standard CSV (with WKT geometries) or GeoJSON.
+A glassmorphic GIS dashboard for selecting road segments, scrubbing through historical
+traffic, overlaying H3 hexagon grids, saving named edge selections back into the
+database, and exporting them as CSV (with WKT geometries) or GeoJSON.
 
-### Launch the Dashboard
+### Cloud version (recommended) — `docs/sensor_selector_cloud.html`
 
-Run the selector script from the project root. This starts a built-in server on port `8080` and automatically opens your browser:
+The current dashboard runs as a static page hosted on GitHub Pages. It talks directly
+to MotherDuck from the browser via `@motherduck/wasm-client`, so no local server is needed.
+
+[Open the dashboard ↗](https://khoshkhah.github.io/osm-traffic-enrichment/sensor_selector_cloud.html)
+
+On first load it prompts for a [MotherDuck token](https://app.motherduck.com/settings),
+which is stored in browser `localStorage` only on your device. Area timezones are read
+from `main.visualization_metadata.timezone` so Run History timestamps render in local time.
+
+### Local version — `scripts/sensor_selector.py` (legacy)
+
+The older local-server variant — runs an `http.server` on port 8080 against a local
+`.duckdb` file. Kept for offline / pre-MotherDuck workflows; not as up-to-date as the
+cloud version (it still uses `timeapi.io` for timezone resolution).
 
 ```bash
 python scripts/sensor_selector.py
 ```
 
-### Key Features
-1. **Interactive Leaflet Map**: Built with a premium glassmorphic dark theme. You can click on any road segment to select/deselect it.
-2. **Road Styling Themes**: Toggle road layer colors by *OSM Road Category*, *Slate Gray*, *Bright White*, or direct *Mapbox / Google / TomTom Traffic Congestion* flows.
-3. **Historical Playback Dropdown**: When a traffic theme is selected, scrub through all timestamped historical snapshots captured in your database to visualize past congestion.
-4. **H3 Cell Index Grid**: View your boundary H3 cells layer with interactive opacity controls and resolution selectors.
-5. **Saved Selections Manager**: Input a selection name and a **custom note/explanation** (e.g. why/how these roads were chosen), save it directly inside DuckDB, overlay it back onto the map in neon-green, load it back to the active workspace, or delete it cleanly.
-6. **Robust Exporters**: Download active selections instantly as **GeoJSON** or **CSV** (featuring coordinates styled as standard Well-Known Text `"LINESTRING (...)"` strings for simple spreadsheet loading).
-
-See **[docs/pipeline_cli.md](docs/pipeline_cli.md)** for the full argument reference.
+### Key Features (both versions)
+1. **Interactive Leaflet Map** — click any road segment to select/deselect.
+2. **Road Styling Themes** — toggle road colors by OSM road category, slate gray, bright white, or live Mapbox / Google / TomTom traffic congestion.
+3. **Historical Playback** — scrub through all timestamped runs in the `runs` table for the active source.
+4. **H3 Cell Index Grid** — overlay boundary H3 cells with opacity controls and resolution selector.
+5. **Saved Selections Manager** — name a selection, attach a free-text note, persist to `saved_selections` + `saved_selections_meta`, overlay or reload at any time.
+6. **Exporters** — download active selections as GeoJSON or CSV (CSV uses `LINESTRING (...)` WKT for easy spreadsheet ingest).
 
 ---
 
