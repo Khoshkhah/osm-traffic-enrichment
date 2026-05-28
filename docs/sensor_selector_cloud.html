@@ -1283,9 +1283,28 @@
         ...paneOpt,
         style: f => ({ color: '#EE00FF', weight: getRoadWeight(f.properties.highway) * 1.5, opacity: 1.0, lineCap: 'round', lineJoin: 'round' }),
         onEachFeature(feature, layer) {
-          layer.on('click', () => {
-            selectedEdges.delete(feature.properties.edge_id);
-            updateSidebarSelections();
+          const props = feature.properties;
+          layer.bindTooltip(() => {
+            const meta = [];
+            if (props.lanes) meta.push(`${props.lanes} lane${props.lanes > 1 ? 's' : ''}`);
+            if (props.oneway === 'yes') meta.push('one-way');
+            if (props.maxspeed_kmh) meta.push(`${Math.round(props.maxspeed_kmh)} km/h`);
+            return `<div>
+              <div class="font-bold">${props.name}</div>
+              <div class="text-gray-400 text-xs mt-0.5">${props.highway.toUpperCase()} &middot; ${props.length_m} m${meta.length ? ' &middot; ' + meta.join(' &middot; ') : ''}</div>
+            </div>`;
+          }, { sticky: true });
+          layer.on({
+            mouseover(e) {
+              e.target.setStyle({ color: '#ffffff', weight: getRoadWeight(props.highway) * 1.5 + 1, opacity: 1.0 });
+            },
+            mouseout(e) {
+              e.target.setStyle({ color: '#EE00FF', weight: getRoadWeight(props.highway) * 1.5, opacity: 1.0 });
+            },
+            click() {
+              selectedEdges.delete(props.edge_id);
+              updateSidebarSelections();
+            }
           });
         }
       }).addTo(map);
