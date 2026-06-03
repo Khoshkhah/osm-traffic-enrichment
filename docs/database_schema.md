@@ -219,13 +219,13 @@ The `run_id` links to the source-specific history table.
 | `run_id` | INTEGER | Links to `runs.run_id` |
 | `edge_id` | INTEGER | Links to `driving.edges.edge_id` |
 | `congestion` | VARCHAR | `low` / `moderate` / `heavy` / `severe` |
-| `covering_match` | DOUBLE | % of the OSM edge the winning provider segment covers (max-cover selection) |
-| `quality_match` | DOUBLE | Geometric alignment of the winning match, `exp(−drift/τ)·cos(bearing)` in 0–1 |
+| `covering_match` | INTEGER | % of the OSM edge the winning provider segment covers, 0–100 (max-cover selection) |
+| `quality_match` | INTEGER | Geometric alignment of the winning match, `100·exp(−drift/τ)·cos(bearing)`, 0–100 |
 | `matched_at` | TIMESTAMP | UTC timestamp |
 
 > The route matcher does **no filtering** — each edge takes its max-covering candidate and
 > `covering_match` / `quality_match` are stored so you can filter at query time (e.g.
-> `WHERE quality_match >= 0.7 AND covering_match >= 40`). Google is pixel-matched, so its
+> `WHERE quality_match >= 70 AND covering_match >= 40`). Google is pixel-matched, so its
 > `covering_match` / `quality_match` are NULL. See [matching.md](matching.md).
 
 ---
@@ -245,8 +245,8 @@ is pixel-matched, not route-matched).
 | `edge_id` | INTEGER | Links to `driving.edges.edge_id` |
 | `traffic_level` | DOUBLE | Raw TomTom relative flow (0.0 = blocked, 1.0 = free flow) |
 | `congestion` | VARCHAR | Classified from `traffic_level` |
-| `covering_match` | DOUBLE | % of the OSM edge the winning provider segment covers |
-| `quality_match` | DOUBLE | Geometric alignment of the winning match (0–1) |
+| `covering_match` | INTEGER | % of the OSM edge the winning provider segment covers, 0–100 |
+| `quality_match` | INTEGER | Geometric alignment of the winning match, 0–100 |
 | `matched_at` | TIMESTAMP | UTC timestamp |
 
 **Example queries:**

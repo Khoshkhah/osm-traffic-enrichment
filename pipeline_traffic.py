@@ -34,7 +34,7 @@ CONFIG FILE KEYS (all optional — CLI flags override):
     utm_srid      Projected metre SRID for matching  (default: auto UTM from boundary)
 
     The route matcher does NO filtering: each OSM edge takes its max-covering candidate, and the
-    winner's covering_match (% of edge) + quality_match (alignment 0–1) are stored in the
+    winner's covering_match (% of edge) + quality_match (alignment, 0–100) are stored in the
     *_congestion_history tables so matches can be filtered later via SQL.
 
     See config/traffic.template.yaml for a ready-to-copy template.

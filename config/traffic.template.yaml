@@ -41,7 +41,7 @@ tomtom_zoom: 14
 
 # Map-matching (Mapbox/TomTom; Google is always pixel-based).
 # The route matcher does NO filtering: each OSM edge takes its max-covering candidate, and the
-# winner's covering_match (% of edge) + quality_match (alignment 0–1) are stored in the
+# winner's covering_match (% of edge) + quality_match (alignment, 0–100) are stored in the
 # *_congestion_history tables so matches can be filtered later via SQL.
 matcher: route            # route = network_matching graph-DTW; geometric = legacy corridor
 match_step_m: 10.0        # graph-DTW sampling step (m)

@@ -52,7 +52,7 @@ are persisted; nothing is dropped at match time.
 at read time, e.g.:
 ```sql
 SELECT * FROM mapbox_congestion_history
-WHERE quality_match >= 0.7 AND covering_match >= 40;
+WHERE quality_match >= 70 AND covering_match >= 40;
 ```
 
 Engine knobs (config): `match_step_m` (sampling step), `match_tau` (quality drift scale),

@@ -163,8 +163,8 @@ class TrafficDB:
                     edge_id        INTEGER,
                     traffic_level  DOUBLE,
                     congestion     VARCHAR,
-                    covering_match DOUBLE,
-                    quality_match  DOUBLE,
+                    covering_match INTEGER,
+                    quality_match  INTEGER,
                     matched_at     TIMESTAMP
                 )
             """)
@@ -174,15 +174,15 @@ class TrafficDB:
                     run_id         INTEGER,
                     edge_id        INTEGER,
                     congestion     VARCHAR,
-                    covering_match DOUBLE,
-                    quality_match  DOUBLE,
+                    covering_match INTEGER,
+                    quality_match  INTEGER,
                     matched_at     TIMESTAMP
                 )
             """)
         # Add the match-quality columns to any pre-existing (older-schema) table.
         tbl = f"{source}_congestion_history"
         for col in ("covering_match", "quality_match"):
-            self.con.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} DOUBLE")
+            self.con.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} INTEGER")
 
         self._migrate_from_legacy(source)
 
@@ -476,8 +476,8 @@ class TrafficDB:
         n_tiles         : count of map tiles covering the boundary at `zoom`
         boundary_name   : area name stored in runs
         traffic_levels  : optional dict edge_id → float (TomTom raw traffic_level only)
-        covering        : optional dict edge_id → covering_match (% of edge the winner covers)
-        quality         : optional dict edge_id → quality_match (alignment 0–1) of the winner
+        covering        : optional dict edge_id → covering_match (integer 0–100, % of edge covered)
+        quality         : optional dict edge_id → quality_match (integer 0–100, 100·alignment)
 
         Returns
         -------

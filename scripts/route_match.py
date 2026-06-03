@@ -10,8 +10,8 @@ disconnected parallel road); the per-edge results are then grouped back per OSM 
 **No filtering.** Per OSM edge we take the **maximum-covering** candidate, and store the winner's
 two numbers so matches can be filtered later via SQL instead of at match time:
 
-  covering_match : % of the OSM edge the winning segment covers (edge_b_used_pct)
-  quality_match  : geometric alignment = exp(-drift/tau) · max(0, cos(bearing))  ∈ [0,1]
+  covering_match : % of the OSM edge the winning segment covers (integer 0–100)
+  quality_match  : 100 · geometric alignment = round(100·exp(-drift/tau)·max(0,cos(bearing)))  (0–100)
 
 Result is exactly one row per OSM edge. (`segment_match_status` below still uses the library's
 `resolve_routes` — that's a separate diagnostic for the NO_MATCH explorer, not the match path.)
@@ -119,9 +119,10 @@ def route_match_segments(
     Match `segments_gdf` (provider traffic, with `level_col`) onto `edges_gdf` (OSM, with
     `edge_id`). **No filtering**: every OSM edge takes its **maximum-covering** candidate.
 
-    The winner's two numbers are returned so they can be stored and filtered later via SQL:
-        covering_match : % of the OSM edge the winning segment covers (edge_b_used_pct)
-        quality_match  : geometric alignment = exp(-drift/tau) · max(0, cos(bearing))
+    The winner's two numbers are returned (integers 0–100) so they can be stored and filtered
+    later via SQL:
+        covering_match : % of the OSM edge the winning segment covers (round of edge_b_used_pct)
+        quality_match  : 100 · geometric alignment = round(100 · exp(-drift/tau) · max(0, cos(bearing)))
 
     extra_cols : provider columns carried to the winning edge (e.g. traffic_level).
     Returns (edge_level, edge_extra, report); edge_extra[edge_id] holds
@@ -159,8 +160,8 @@ def route_match_segments(
     for _, row in rl.loc[win_idx].iterrows():
         eid = int(row["dest_id"])
         edge_level[eid] = row[level_col]
-        ex = {"covering_match": round(float(row["covering_match"]), 1),
-              "quality_match":  round(float(row["quality_match"]), 3)}
+        ex = {"covering_match": int(round(float(row["covering_match"]))),          # 0–100
+              "quality_match":  int(round(float(row["quality_match"]) * 100))}      # 0–100
         for c in extra_cols:
             ex[c] = None if pd.isna(row[c]) else row[c]
         edge_extra[eid] = ex
