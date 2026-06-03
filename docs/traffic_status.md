@@ -48,11 +48,8 @@ no color analysis needed.
 1. Download traffic-v1 + streets-v8 MVT tiles        scripts/mapbox_traffic.py
 2. Decode tile features — each has {congestion: "low"|...}
 3. Spatial join streets + traffic (sjoin_nearest, max 20 m)
-4. Geometric map match to OSM edges:
-   - 25 m corridor buffer
-   - ≤ 45° bearing filter
-   - ≥ 40% overlap threshold
-   - Most severe congestion wins
+4. Route-based map match to OSM edges (default; longest-overlap wins, coverage gate)
+   — legacy geometric matcher available via matcher: geometric. See docs/matching.md
 5. Write to mapbox_congestion_history
 ```
 
@@ -132,9 +129,8 @@ adjusted without re-fetching.
 2. Decode "Traffic flow" layer — each feature has:
    {traffic_level: float, road_closure: bool, road_type: str}
 3. Classify traffic_level → congestion level
-4. Geometric map match to OSM edges (same as Mapbox):
-   - 25 m corridor buffer, ≤ 45° bearing, ≥ 40% overlap
-   - Most severe congestion wins; winning segment's traffic_level is stored
+4. Route-based map match to OSM edges (same as Mapbox; longest-overlap wins, coverage gate).
+   Winning segment's traffic_level is stored. Legacy geometric via matcher: geometric.
 5. Write to tomtom_congestion_history (congestion + traffic_level columns)
 ```
 
@@ -161,7 +157,7 @@ WHERE run_id = (SELECT max(run_id) FROM runs WHERE source = 'tomtom');
 | Free-flowing roads | Always `low` | `no data` (not colored) | `low` (≥ 0.85) |
 | `no data` meaning | No GPS coverage | Flowing normally OR no coverage | No coverage |
 | Raw value stored | — | — | `traffic_level` (0.0–1.0) |
-| Map matching | Geometric (25 m + bearing) | Bearing-based pixel match | Geometric (25 m + bearing) |
+| Map matching | Route-based graph-DTW (default) | Bearing-based pixel match | Route-based graph-DTW (default) |
 | Typical coverage | ~98% of edges | ~5–15% of edges | ~60–80% of edges |
 
 > **Critical difference:** Mapbox `low` and Google `no data` often describe the same

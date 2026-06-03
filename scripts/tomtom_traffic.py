@@ -138,11 +138,16 @@ class TomTomTraffic:
     DIR_THRESH     = 45    # degrees bearing tolerance
     OVERLAP_THRESH = 0.40  # minimum edge-in-corridor overlap fraction
 
-    def __init__(self, api_key: str, zoom: int = 14, workers: int = 6) -> None:
-        self.api_key = api_key
-        self.zoom    = zoom
-        self.workers = workers
-        self.n_tiles = 0  # set by .fetch()
+    def __init__(self, api_key: str, zoom: int = 14, workers: int = 6,
+                 matcher: str = "route", match_cfg: dict | None = None) -> None:
+        self.api_key   = api_key
+        self.zoom      = zoom
+        self.workers   = workers
+        self.n_tiles   = 0  # set by .fetch()
+        self.matcher   = matcher          # "route" (network_matching) or "geometric" (legacy)
+        self.match_cfg = match_cfg or {}
+        self.last_match_report: dict | None = None  # match outcome from the route matcher
+        self.last_edge_extra:   dict | None = None  # edge_id → {covering_match, quality_match, …}
 
     def fetch(self, boundary_path: str | Path, tiles_dir: str | Path,
               out_file: str | Path) -> gpd.GeoDataFrame:
@@ -199,19 +204,32 @@ class TomTomTraffic:
         traffic.to_file(out_file, driver="GeoJSON")
         return traffic
 
+    @staticmethod
+    def _load_edges(db_path: str | Path) -> gpd.GeoDataFrame:
+        """Load driving.edges (edge_id + geometry) as a GeoDataFrame in EPSG:4326."""
+        import duckdb
+        con = duckdb.connect(str(db_path), read_only=True)
+        con.execute("INSTALL spatial")
+        con.execute("LOAD spatial")
+        df = con.execute(
+            "SELECT edge_id, ST_AsText(geometry) wkt_geom FROM driving.edges"
+        ).df()
+        con.close()
+        return gpd.GeoDataFrame(
+            df.drop(columns=["wkt_geom"]),
+            geometry=gpd.GeoSeries.from_wkt(df["wkt_geom"]), crs="EPSG:4326",
+        )
+
     def map_match(self, db_path: str | Path,
                   traffic_gdf: gpd.GeoDataFrame,
                   ) -> tuple[dict[int, str], dict[int, float | None]]:
         """
         Match TomTom traffic segments to OSM driving edges.
 
-        Uses a 25 m corridor, bearing filter (≤ 45°), and 40% overlap threshold.
-        The most severe congestion wins; ties keep the matching segment's traffic_level.
-
-        Parameters
-        ----------
-        db_path     : path to DuckDB file
-        traffic_gdf : GeoDataFrame returned by fetch()
+        Default matcher ("route") uses network_matching's route-based graph-DTW
+        (provider → OSM, longest-overlap wins, coverage gate); the winning segment's
+        raw traffic_level is carried through. Set matcher="geometric" for the legacy
+        25 m corridor + bearing + overlap most-severe matcher.
 
         Returns
         -------
@@ -219,6 +237,24 @@ class TomTomTraffic:
             edge_congestion : dict edge_id → congestion level string
             traffic_levels  : dict edge_id → raw traffic_level float (or None)
         """
+        if self.matcher == "geometric":
+            return self._map_match_geometric(db_path, traffic_gdf)
+
+        from scripts.route_match import route_match_segments
+        edges = self._load_edges(db_path)
+        edge_level, edge_extra, self.last_match_report = route_match_segments(
+            edges, traffic_gdf, level_col="congestion",
+            extra_cols=("traffic_level",), **self.match_cfg
+        )
+        self.last_edge_extra = edge_extra
+        traffic_levels = {eid: d.get("traffic_level") for eid, d in edge_extra.items()}
+        return edge_level, traffic_levels
+
+    def _map_match_geometric(self, db_path: str | Path,
+                             traffic_gdf: gpd.GeoDataFrame,
+                             ) -> tuple[dict[int, str], dict[int, float | None]]:
+        """Legacy geometric matcher: 25 m corridor, ≤ 45° bearing, ≥ 40% overlap,
+        most severe wins; winning segment's traffic_level is kept."""
         import duckdb
 
         con = duckdb.connect(str(db_path), read_only=True)
