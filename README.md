@@ -354,6 +354,8 @@ See **[docs/traffic_db.md](docs/traffic_db.md)** for the full API reference.
 | File | Contents |
 |---|---|
 | [docs/pipeline_cli.md](docs/pipeline_cli.md) | Full CLI reference for both pipelines |
+| [docs/traffic_data_flow.md](docs/traffic_data_flow.md) | End-to-end: what each source returns, how it's processed, what gets stored |
+| [docs/matching.md](docs/matching.md) | Map-matching: route-based (default) vs geometric, aggregation & coverage rules |
 | [docs/database_schema.md](docs/database_schema.md) | DuckDB tables and columns |
 | [docs/traffic_db.md](docs/traffic_db.md) | `scripts/traffic_db.py` API |
 | [docs/traffic_status.md](docs/traffic_status.md) | Congestion level definitions |

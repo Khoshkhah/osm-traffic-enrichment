@@ -159,22 +159,30 @@ class TrafficDB:
         if source == "tomtom":
             self.con.execute(f"""
                 CREATE TABLE IF NOT EXISTS tomtom_congestion_history (
-                    run_id        INTEGER,
-                    edge_id       INTEGER,
-                    traffic_level DOUBLE,
-                    congestion    VARCHAR,
-                    matched_at    TIMESTAMP
+                    run_id         INTEGER,
+                    edge_id        INTEGER,
+                    traffic_level  DOUBLE,
+                    congestion     VARCHAR,
+                    covering_match DOUBLE,
+                    quality_match  DOUBLE,
+                    matched_at     TIMESTAMP
                 )
             """)
         else:
             self.con.execute(f"""
                 CREATE TABLE IF NOT EXISTS {source}_congestion_history (
-                    run_id     INTEGER,
-                    edge_id    INTEGER,
-                    congestion VARCHAR,
-                    matched_at TIMESTAMP
+                    run_id         INTEGER,
+                    edge_id        INTEGER,
+                    congestion     VARCHAR,
+                    covering_match DOUBLE,
+                    quality_match  DOUBLE,
+                    matched_at     TIMESTAMP
                 )
             """)
+        # Add the match-quality columns to any pre-existing (older-schema) table.
+        tbl = f"{source}_congestion_history"
+        for col in ("covering_match", "quality_match"):
+            self.con.execute(f"ALTER TABLE {tbl} ADD COLUMN IF NOT EXISTS {col} DOUBLE")
 
         self._migrate_from_legacy(source)
 
@@ -453,6 +461,8 @@ class TrafficDB:
         n_tiles:         int            = 1,
         boundary_name:   str            = "",
         traffic_levels:  Optional[dict] = None,
+        covering:        Optional[dict] = None,
+        quality:         Optional[dict] = None,
     ) -> int:
         """
         Write congestion results to {source}_congestion_history and runs.
@@ -466,6 +476,8 @@ class TrafficDB:
         n_tiles         : count of map tiles covering the boundary at `zoom`
         boundary_name   : area name stored in runs
         traffic_levels  : optional dict edge_id → float (TomTom raw traffic_level only)
+        covering        : optional dict edge_id → covering_match (% of edge the winner covers)
+        quality         : optional dict edge_id → quality_match (alignment 0–1) of the winner
 
         Returns
         -------
@@ -488,19 +500,25 @@ class TrafficDB:
 
         if edge_congestion:
             table = f"{source}_congestion_history"
+            cov, qual = covering or {}, quality or {}
             if source == "tomtom":
                 self.con.executemany(
-                    f"INSERT INTO {table} VALUES (?, ?, ?, ?, ?)",
+                    f"INSERT INTO {table} "
+                    f"(run_id, edge_id, traffic_level, congestion, covering_match, quality_match, matched_at) "
+                    f"VALUES (?, ?, ?, ?, ?, ?, ?)",
                     [
                         (run_id, int(eid), traffic_levels.get(eid) if traffic_levels else None,
-                         cong, fetched_at)
+                         cong, cov.get(eid), qual.get(eid), fetched_at)
                         for eid, cong in edge_congestion.items()
                     ],
                 )
             else:
                 self.con.executemany(
-                    f"INSERT INTO {table} VALUES (?, ?, ?, ?)",
-                    [(run_id, int(eid), cong, fetched_at) for eid, cong in edge_congestion.items()],
+                    f"INSERT INTO {table} "
+                    f"(run_id, edge_id, congestion, covering_match, quality_match, matched_at) "
+                    f"VALUES (?, ?, ?, ?, ?, ?)",
+                    [(run_id, int(eid), cong, cov.get(eid), qual.get(eid), fetched_at)
+                     for eid, cong in edge_congestion.items()],
                 )
 
         return run_id

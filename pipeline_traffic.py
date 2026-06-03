@@ -27,6 +27,16 @@ CONFIG FILE KEYS (all optional — CLI flags override):
     tomtom_zoom     TomTom PBF tile zoom  (default: 14)
     refresh         true = delete cached tile files before running  (default: false)
 
+    Map-matching (Mapbox/TomTom only — Google is always pixel-based):
+    matcher       "route" (network_matching graph-DTW) or "geometric" (legacy)  (default: route)
+    match_step_m  graph-DTW sampling step (m); smaller = denser/slower  (default: 10.0)
+    match_tau     drift scale (m) in the stored quality score  (default: 15.0)
+    utm_srid      Projected metre SRID for matching  (default: auto UTM from boundary)
+
+    The route matcher does NO filtering: each OSM edge takes its max-covering candidate, and the
+    winner's covering_match (% of edge) + quality_match (alignment 0–1) are stored in the
+    *_congestion_history tables so matches can be filtered later via SQL.
+
     See config/traffic.template.yaml for a ready-to-copy template.
 """
 
@@ -55,21 +65,30 @@ from scripts.mapbox_traffic import MapboxTraffic
 from scripts.google_traffic import GoogleTraffic
 from scripts.tomtom_traffic import TomTomTraffic
 from scripts.traffic_db import TrafficDB
+from scripts.route_match import format_report
 
 log = logging.getLogger("pipeline.traffic")
+
+
+def _cov_qual(edge_extra: dict | None) -> tuple[dict, dict]:
+    """Split route_match's edge_extra into per-edge covering / quality dicts."""
+    e = edge_extra or {}
+    return ({eid: d.get("covering_match") for eid, d in e.items()},
+            {eid: d.get("quality_match") for eid, d in e.items()})
 
 
 # ── Mapbox ────────────────────────────────────────────────────────────────────
 
 def run_mapbox(db_path: Path, boundary: Path, zoom: int,
-               name: str, tiles_dir: Path, output_dir: Path) -> None:
+               name: str, tiles_dir: Path, output_dir: Path,
+               matcher: str = "route", match_cfg: dict | None = None) -> None:
     token = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
     if not token or not token.startswith("pk."):
         log.error("  MAPBOX_ACCESS_TOKEN not set or invalid — skipping Mapbox")
         return
 
     traffic_file = output_dir / f"{name}_traffic_mapbox.geojson"
-    mb = MapboxTraffic(token=token, zoom=zoom)
+    mb = MapboxTraffic(token=token, zoom=zoom, matcher=matcher, match_cfg=match_cfg)
 
     log.info(f"  Fetching Mapbox tiles (zoom={zoom})...")
     gdf = mb.fetch(boundary, tiles_dir, traffic_file)
@@ -77,12 +96,17 @@ def run_mapbox(db_path: Path, boundary: Path, zoom: int,
     log.debug(f"  Distribution    : {gdf['congestion'].value_counts().to_dict()}")
 
     edge_cong = mb.map_match(db_path, gdf)
+    if mb.last_match_report:
+        for line in format_report(mb.last_match_report, "mapbox"):
+            log.info(line)
     log.info(f"  Edges matched   : {len(edge_cong):,}")
 
+    covering, quality = _cov_qual(mb.last_edge_extra)
     with TrafficDB(str(db_path), read_only=False) as db:
         run_id = db.write_congestion(
             edge_cong, source="mapbox", zoom=zoom,
             n_segments=len(gdf), n_tiles=mb.n_tiles, boundary_name=name,
+            covering=covering, quality=quality,
         )
     log.info(f"  mapbox_congestion_history: {len(edge_cong):,} rows (run_id={run_id})")
 
@@ -123,31 +147,36 @@ def run_google(db_path: Path, boundary: Path, zoom: int,
 
 
 def run_tomtom(db_path: Path, boundary: Path, zoom: int,
-               name: str, tiles_dir: Path, output_dir: Path) -> None:
+               name: str, tiles_dir: Path, output_dir: Path,
+               matcher: str = "route", match_cfg: dict | None = None) -> None:
     api_key = os.environ.get("TOMTOM_API_KEY", "")
     if not api_key:
         log.error("  TOMTOM_API_KEY not set — skipping TomTom")
         return
 
     traffic_file = output_dir / f"{name}_traffic_tomtom.geojson"
-    tt = TomTomTraffic(api_key=api_key, zoom=zoom)
+    tt = TomTomTraffic(api_key=api_key, zoom=zoom, matcher=matcher, match_cfg=match_cfg)
 
     log.info(f"  Fetching TomTom PBF tiles (zoom={zoom})...")
     gdf = tt.fetch(boundary, tiles_dir, traffic_file)
     log.info(f"  Segments        : {len(gdf):,}")
 
     edge_cong, traffic_levels = tt.map_match(db_path, gdf)
+    if tt.last_match_report:
+        for line in format_report(tt.last_match_report, "tomtom"):
+            log.info(line)
     log.info(f"  Edges matched   : {len(edge_cong):,}")
 
     if not edge_cong:
         log.warning("  No TomTom segments matched — tomtom_congestion_history not updated")
         return
 
+    covering, quality = _cov_qual(tt.last_edge_extra)
     with TrafficDB(str(db_path), read_only=False) as db:
         run_id = db.write_congestion(
             edge_cong, source="tomtom", zoom=zoom,
             n_segments=len(gdf), n_tiles=tt.n_tiles, boundary_name=name,
-            traffic_levels=traffic_levels,
+            traffic_levels=traffic_levels, covering=covering, quality=quality,
         )
     log.info(f"  tomtom_congestion_history: {len(edge_cong):,} rows (run_id={run_id})")
 
@@ -253,6 +282,9 @@ def main():
                         help="TomTom tile zoom  (config: tomtom_zoom, default 14)")
     parser.add_argument("--refresh", action="store_true",
                         help="Delete cached tile files before running  (config: refresh)")
+    parser.add_argument("--matcher", choices=["route", "geometric"], default=None,
+                        help="Map-matching backend for Mapbox/TomTom  "
+                             "(config: matcher, default route)")
 
     args = parser.parse_args()
     cfg  = load_config(args.config)
@@ -274,6 +306,19 @@ def main():
     google_zoom = args.google_zoom or cfg.get("google_zoom", 16)
     tomtom_zoom = args.tomtom_zoom or cfg.get("tomtom_zoom", 14)
     do_refresh  = args.refresh or bool(cfg.get("refresh", False))
+
+    # Map-matching backend (Mapbox/TomTom). "route" = network_matching route-based
+    # graph-DTW; "geometric" = legacy corridor matcher. Google is always pixel-based.
+    matcher = args.matcher or cfg.get("matcher", "route")
+
+    def match_cfg_for(provider: str) -> dict:
+        """Route-matcher config — no filtering; quality + covering are stored, not gated."""
+        c = {"step_meters": float(cfg.get("match_step_m", 10.0))}
+        if cfg.get("match_tau"):
+            c["tau"] = float(cfg["match_tau"])
+        if cfg.get("utm_srid"):
+            c["utm_srid"] = int(cfg["utm_srid"])
+        return c
 
     if args.source and args.source != "all":
         use_sources = [args.source]
@@ -300,6 +345,10 @@ def main():
     if "google" in use_sources: log.info(f"  Google    : zoom {google_zoom}")
     if "tomtom" in use_sources: log.info(f"  TomTom    : zoom {tomtom_zoom}")
     log.info(f"  Refresh   : {do_refresh}")
+    if {"mapbox", "tomtom"} & set(use_sources):
+        log.info(f"  Matcher   : {matcher}"
+                 + ("  (no filter — max cover; covering+quality stored)"
+                    if matcher == "route" else ""))
     log.info(f"  Started   : {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC")
     if args.config:
         log.info(f"  Config    : {args.config}")
@@ -314,7 +363,8 @@ def main():
         step = 1
         if "mapbox" in use_sources:
             with StepTimer(f"[{step}] Mapbox → mapbox_congestion_history"):
-                run_mapbox(db_path, boundary, mapbox_zoom, name, tiles_dir, output_dir)
+                run_mapbox(db_path, boundary, mapbox_zoom, name, tiles_dir, output_dir,
+                           matcher=matcher, match_cfg=match_cfg_for("mapbox"))
             step += 1
 
         if "google" in use_sources:
@@ -325,7 +375,8 @@ def main():
         if "tomtom" in use_sources:
             with StepTimer(f"[{step}] TomTom → tomtom_congestion_history"):
                 run_tomtom(db_path, boundary, tomtom_zoom, name,
-                           tiles_dir / "tomtom", output_dir)
+                           tiles_dir / "tomtom", output_dir,
+                           matcher=matcher, match_cfg=match_cfg_for("tomtom"))
 
     except Exception as e:
         log.error(f"\nPipeline FAILED: {e}")

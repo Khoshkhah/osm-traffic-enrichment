@@ -110,11 +110,16 @@ class MapboxTraffic:
     workers : parallel download threads (default 6)
     """
 
-    def __init__(self, token: str, zoom: int = 14, workers: int = 6) -> None:
-        self.token   = token
-        self.zoom    = zoom
-        self.workers = workers
-        self.n_tiles = 0  # set by .fetch()
+    def __init__(self, token: str, zoom: int = 14, workers: int = 6,
+                 matcher: str = "route", match_cfg: dict | None = None) -> None:
+        self.token     = token
+        self.zoom      = zoom
+        self.workers   = workers
+        self.n_tiles   = 0  # set by .fetch()
+        self.matcher   = matcher          # "route" (network_matching) or "geometric" (legacy)
+        self.match_cfg = match_cfg or {}
+        self.last_match_report: dict | None = None  # match outcome from the route matcher
+        self.last_edge_extra:   dict | None = None  # edge_id → {covering_match, quality_match, …}
 
     def fetch(self, boundary_path: str | Path, tiles_dir: str | Path,
               out_file: str | Path) -> gpd.GeoDataFrame:
@@ -200,24 +205,49 @@ class MapboxTraffic:
         clipped.to_file(out_file, driver="GeoJSON")
         return clipped
 
+    @staticmethod
+    def _load_edges(db_path: str | Path) -> gpd.GeoDataFrame:
+        """Load driving.edges (edge_id + geometry) as a GeoDataFrame in EPSG:4326."""
+        import duckdb
+        con = duckdb.connect(str(db_path), read_only=True)
+        con.execute("INSTALL spatial")
+        con.execute("LOAD spatial")
+        df = con.execute(
+            "SELECT edge_id, ST_AsText(geometry) wkt_geom FROM driving.edges"
+        ).df()
+        con.close()
+        return gpd.GeoDataFrame(
+            df.drop(columns=["wkt_geom"]),
+            geometry=gpd.GeoSeries.from_wkt(df["wkt_geom"]), crs="EPSG:4326",
+        )
+
     def map_match(self, db_path: str | Path,
                   traffic_gdf: gpd.GeoDataFrame) -> dict[int, str]:
         """
         Match Mapbox street segments (with congestion) to OSM driving edges.
 
-        Uses a 25 m corridor buffer, bearing filter (≤ 45°), and 40% overlap
-        threshold. The most severe congestion wins when multiple segments match
-        the same edge.
-
-        Parameters
-        ----------
-        db_path     : path to the DuckDB file
-        traffic_gdf : GeoDataFrame returned by fetch() with 'congestion' column
+        Default matcher ("route") uses network_matching's route-based graph-DTW
+        (provider → OSM, longest-overlap wins, coverage gate). Set matcher="geometric"
+        for the legacy 25 m corridor + bearing + overlap most-severe matcher.
 
         Returns
         -------
         dict mapping edge_id (int) → congestion level string
         """
+        if self.matcher == "geometric":
+            return self._map_match_geometric(db_path, traffic_gdf)
+
+        from scripts.route_match import route_match_segments
+        edges = self._load_edges(db_path)
+        edge_level, self.last_edge_extra, self.last_match_report = route_match_segments(
+            edges, traffic_gdf, level_col="congestion", **self.match_cfg
+        )
+        return edge_level
+
+    def _map_match_geometric(self, db_path: str | Path,
+                             traffic_gdf: gpd.GeoDataFrame) -> dict[int, str]:
+        """Legacy geometric matcher: 25 m corridor, ≤ 45° bearing, ≥ 40% overlap,
+        most severe wins."""
         import duckdb
         con = duckdb.connect(str(db_path), read_only=True)
         con.execute("INSTALL spatial")
